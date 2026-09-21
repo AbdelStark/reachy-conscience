@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .guard import Action, Verdict, is_hard_stop
+from .guard import Action, GuardAssessment, Verdict, is_hard_stop
 from .ledger import Ledger
 
 
@@ -36,7 +36,7 @@ class Motion:
 
 
 Proposal = Speech | ToolCall | Motion
-Guard = Callable[[Action], Awaitable[Verdict]]
+Guard = Callable[[Action], Awaitable[Verdict | GuardAssessment]]
 _CONFIRMABLE_HOLDS = frozenset({"confirm_before", "model_requests_confirmation", "irreversible_tool"})
 
 
@@ -142,14 +142,34 @@ class GuardedConversation:
 
     async def _judge(self, action: Action) -> Verdict:
         start = time.monotonic()
+        probabilities: dict[str, float] = {}
+        bank: str | None = None
+        model: str | None = None
         try:
-            verdict = await asyncio.wait_for(self.guard(action), self.guard_timeout_s)
+            result = await asyncio.wait_for(self.guard(action), self.guard_timeout_s)
+            if isinstance(result, GuardAssessment):
+                verdict = result.verdict
+                probabilities = dict(result.probabilities)
+                bank = result.bank
+                model = result.model
+            else:
+                verdict = result
             if verdict.kind not in ("approve", "hold", "block"):
                 verdict = Verdict("hold", "invalid_verdict")
         except Exception:
             verdict = Verdict("hold", "judgment_unavailable")
+            probabilities = {}
+            bank = None
+            model = None
         if self.ledger is not None:
-            self.ledger.append(action, verdict, {}, (time.monotonic() - start) * 1000)
+            self.ledger.append(
+                action,
+                verdict,
+                probabilities,
+                (time.monotonic() - start) * 1000,
+                bank=bank,
+                model=model,
+            )
         return verdict
 
     async def run_turn(self, transcript: str) -> TurnResult:

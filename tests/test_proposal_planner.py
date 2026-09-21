@@ -14,6 +14,7 @@ from reachy_conscience import (
     EspeakFfmpegSynthesizer,
     GuardedConversation,
     GuardPolicy,
+    Ledger,
     Speech,
     Verdict,
 )
@@ -157,7 +158,7 @@ async def test_incomplete_or_redirected_response_fails_closed(ollama_fixture):
     not shutil.which("espeak-ng") or not shutil.which("ffmpeg"),
     reason="offline TTS binaries are not installed",
 )
-async def test_complete_fixture_path_guards_both_inbound_and_speech_before_pcm(ollama_fixture):
+async def test_complete_fixture_path_guards_both_inbound_and_speech_before_pcm(ollama_fixture, tmp_path):
     endpoint, _reply, received = ollama_fixture
     events = []
 
@@ -189,14 +190,23 @@ async def test_complete_fixture_path_guards_both_inbound_and_speech_before_pcm(o
             return await EspeakFfmpegSynthesizer().synthesize(text)
 
     audio = FakeAudio()
+    ledger = Ledger(tmp_path / "verdicts.db")
     app = GuardedConversation(
         planner=LocalOllamaPlanner("fixture", endpoint=endpoint),
         guard=AsyncTypeSafeGuard(FakeJev(), GuardPolicy()),
         synthesizer=RecordingTts(),
         audio=audio,
         emergency_stop=audio,
+        ledger=ledger,
     )
     result = await app.run_turn("hello")
     assert (result.status, result.delivered) == ("complete", 1)
     assert events == ["jev:inbound", "jev:utterance", "synthesize", "enqueue"]
     assert len(received) == 1
+    rows = ledger.recent()
+    assert [row["kind"] for row in rows] == ["utterance", "inbound"]
+    assert rows[0]["summary"] == "utterance action"
+    assert rows[0]["bank"] == "conscience.guard@0.1.0"
+    assert json.loads(rows[0]["probabilities"])["appropriate_for_audience"] == 1.0
+    assert "hello" not in ledger.export_jsonl()
+    ledger.close()

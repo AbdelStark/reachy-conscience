@@ -7,7 +7,7 @@ import threading
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from .guard import Action, GuardPolicy, Judgment, Verdict, decide
+from .guard import Action, GuardAssessment, GuardPolicy, Judgment, Verdict, decide
 
 BANK = "conscience.guard@0.1.0"
 _SEVERITY = [
@@ -158,9 +158,19 @@ class AsyncTypeSafeGuard:
         self.policy = policy
         self._client_lock = threading.Lock()
 
-    def _judge(self, action: Action) -> Verdict:
+    def _judge(self, action: Action) -> GuardAssessment:
         with self._client_lock:
-            return guard_typesafe(self.client, action, self.policy)
+            try:
+                answers = ask_typesafe(self.client, action, self.policy)
+                verdict = decide(action, answers, self.policy)
+                probabilities = {
+                    key: float(value)
+                    for key, value in answers.items()
+                    if key != "severity" and isinstance(value, (int, float)) and 0 <= value <= 1
+                }
+                return GuardAssessment(verdict, probabilities, BANK)
+            except Exception:
+                return GuardAssessment(Verdict("hold", "judgment_unavailable"), {}, BANK)
 
-    async def __call__(self, action: Action) -> Verdict:
+    async def __call__(self, action: Action) -> GuardAssessment:
         return await asyncio.to_thread(self._judge, action)

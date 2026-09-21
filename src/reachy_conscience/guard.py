@@ -59,6 +59,16 @@ class Verdict:
     reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class GuardAssessment:
+    """Verdict plus inspectable numeric judgments, without action text."""
+
+    verdict: Verdict
+    probabilities: Mapping[str, float] = field(default_factory=dict)
+    bank: str | None = None
+    model: str | None = None
+
+
 def lint_rules(rules: tuple[str, ...]) -> list[str]:
     issues: list[str] = []
     for i, rule in enumerate(rules, 1):
