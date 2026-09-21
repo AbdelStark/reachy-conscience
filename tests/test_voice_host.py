@@ -10,6 +10,7 @@ import pytest
 
 from reachy_conscience import GuardPolicy, LocalNotesTool, OwnerApprovalBroker, PolicyStore, TurnResult
 from reachy_conscience.owner_console import OwnerConsole
+from reachy_conscience.reflex_speaking import SpeakingObservedPlayback
 from reachy_conscience.voice_host import main, operator_turns
 
 
@@ -161,6 +162,30 @@ def test_operator_ends_on_uncertain_output_error(tmp_path):
     assert session.stops == 1
 
 
+def test_operator_quiet_assertion_precedes_capture_but_not_unknown_commands(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    events = []
+
+    class OrderedSession(FakeSession):
+        async def run_once(self, *, listen_timeout_s=30.0):
+            events.append("capture")
+            return await super().run_once(listen_timeout_s=listen_timeout_s)
+
+    session = OrderedSession(guard)
+    commands = iter(["unknown", "", "q"])
+    operator_turns(
+        session,
+        store,
+        guard,
+        prompt=lambda _message: next(commands),
+        report=lambda _message: None,
+        on_operator_quiet=lambda: events.append("operator_quiet"),
+    )
+    assert events == ["operator_quiet", "capture"]
+    assert session.stops == 1
+
+
 def test_sign_response_failure_requests_owned_stop_instead_of_another_turn(tmp_path):
     store = PolicyStore(tmp_path / "policy.json")
     guard = SimpleNamespace(policy=store.load())
@@ -242,19 +267,48 @@ def test_cli_help_and_hardware_gate_do_not_import_robot_or_start_capture(tmp_pat
     assert "require --enable-camera-signs" in capsys.readouterr().err
 
 
+def test_reflex_speaking_option_needs_a_private_writer_token_before_state_creation(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr("reachy_conscience.voice_host.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.delenv("REFLEX_SPEAKING_WRITER_TOKEN", raising=False)
+    with pytest.raises(SystemExit) as missing_token:
+        main(
+            [
+                "--state-dir",
+                str(tmp_path / "state"),
+                "--model-path",
+                str(tmp_path / "model"),
+                "--ollama-model",
+                "local-model",
+                "--robot-host",
+                "127.0.0.1",
+                "--connection-mode",
+                "localhost_only",
+                "--acknowledge-experimental-hardware",
+                "--reflex-speaking-relay-url",
+                "http://127.0.0.1:8048",
+            ]
+        )
+    assert missing_token.value.code == 2
+    assert "speaking writer token" in capsys.readouterr().err
+    assert not (tmp_path / "state").exists()
+
+
 @pytest.mark.parametrize(
-    ("enable_notes", "enable_signs", "enable_responses"),
+    ("enable_notes", "enable_signs", "enable_responses", "enable_reflex"),
     [
-        (False, False, False),
-        (True, False, False),
-        (False, True, False),
-        (True, True, False),
-        (False, True, True),
-        (True, True, True),
+        (False, False, False, False),
+        (True, False, False, False),
+        (False, True, False, False),
+        (True, True, False, False),
+        (False, True, True, False),
+        (True, True, True, False),
+        (False, False, False, True),
     ],
 )
 def test_cli_composes_guarded_owned_ports_without_running_a_turn(
-    tmp_path, monkeypatch, enable_notes, enable_signs, enable_responses
+    tmp_path, monkeypatch, enable_notes, enable_signs, enable_responses, enable_reflex
 ):
     if enable_signs:
         pytest.importorskip("PIL")
@@ -282,7 +336,13 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
 
     def inspect_session(session, _store, guard, **_options):
         conversation = session.conversation
-        assert session.ingress.capture is session.playback.backend
+        if enable_reflex:
+            assert isinstance(session.playback.backend, SpeakingObservedPlayback)
+            assert session.ingress.capture is session.playback.backend.backend
+            assert callable(_options["on_operator_quiet"])
+        else:
+            assert session.ingress.capture is session.playback.backend
+            assert _options["on_operator_quiet"] is None
         assert session.playback is conversation.audio
         assert conversation.guard is guard
         assert conversation.require_inbound_route is True
@@ -333,6 +393,8 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
     monkeypatch.setattr("reachy_conscience.voice_host.operator_turns", inspect_session)
     monkeypatch.setattr("reachy_conscience.voice_host.OwnerConsole", TrackingConsole)
     monkeypatch.setattr("reachy_conscience.voice_host.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    if enable_reflex:
+        monkeypatch.setenv("REFLEX_SPEAKING_WRITER_TOKEN", "w" * 40)
     if enable_signs:
         monkeypatch.setattr("reachy_conscience.voice_host.shutil.which", lambda _binary: "/usr/bin/tesseract")
     assert (
@@ -352,6 +414,7 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
                 *(["--enable-local-notes"] if enable_notes else []),
                 *(["--enable-camera-signs"] if enable_signs else []),
                 *(["--enable-camera-sign-responses"] if enable_responses else []),
+                *(["--reflex-speaking-relay-url", "http://127.0.0.1:8048"] if enable_reflex else []),
             ]
         )
         == 0

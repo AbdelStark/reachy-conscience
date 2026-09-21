@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import shutil
 import sys
 from collections.abc import Awaitable, Callable
@@ -32,6 +33,7 @@ from .policy_store import PolicyStore
 from .proposal_planner import LocalOllamaPlanner
 from .reachy_audio import ReachyMediaAudio
 from .reachy_motion import ReachyOutputStop, ReachySdkMotion
+from .reflex_speaking import ReflexSpeakingPublisher, SpeakingObservedPlayback
 from .session import OwnedPlaybackGate, OwnedVoiceSession
 
 
@@ -56,6 +58,7 @@ def operator_turns(
     sign_ingress: SignIngress | None = None,
     screen_sign: Callable[[str], Awaitable[TurnResult]] | None = None,
     sign_responder: Callable[[], Awaitable[TurnResult]] | None = None,
+    on_operator_quiet: Callable[[], None] | None = None,
 ) -> None:
     """Reload policy only between turns; stop owned output on every exit.
 
@@ -85,6 +88,8 @@ def operator_turns(
             if command.strip().lower() in {"q", "quit"}:
                 break
             if command.strip().lower() == "r" and sign_responder is not None:
+                if on_operator_quiet is not None:
+                    on_operator_quiet()
                 guard.policy = _effective_policy(policy_store.load(), required_confirmation)
                 try:
                     result = asyncio.run(sign_responder())
@@ -96,6 +101,8 @@ def operator_turns(
                     break
                 continue
             if command.strip().lower() == "s" and sign_ingress is not None:
+                if on_operator_quiet is not None:
+                    on_operator_quiet()
                 assert screen_sign is not None
                 guard.policy = _effective_policy(policy_store.load(), required_confirmation)
                 try:
@@ -109,6 +116,8 @@ def operator_turns(
             if command.strip():
                 report("Unknown command; no microphone was opened.")
                 continue
+            if on_operator_quiet is not None:
+                on_operator_quiet()
             guard.policy = _effective_policy(policy_store.load(), required_confirmation)
             result = asyncio.run(session.run_once(listen_timeout_s=listen_timeout_s))
             report(f"Turn: {result.status}; guarded outputs: {result.delivered}.")
@@ -142,6 +151,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--console-port", type=int, default=0, help="Owner console loopback port")
     parser.add_argument("--listen-timeout", type=float, default=30.0, help="Seconds per capture, 1..120")
     parser.add_argument(
+        "--reflex-speaking-relay-url",
+        help=(
+            "Opt in to advisory speaking assertions at a numeric 127.0.0.1 Reflex relay; "
+            "token comes from REFLEX_SPEAKING_WRITER_TOKEN"
+        ),
+    )
+    parser.add_argument(
         "--enable-local-notes",
         action="store_true",
         help="Opt in to exact-owner-approved local notes; no external messages",
@@ -172,6 +188,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("listen timeout must be within 1..120 seconds")
     if args.connection_mode == "localhost_only" and args.robot_host not in {"127.0.0.1", "localhost"}:
         parser.error("localhost_only requires a local robot host")
+    publisher = None
+    if args.reflex_speaking_relay_url:
+        writer_token = os.environ.get("REFLEX_SPEAKING_WRITER_TOKEN", "")
+        try:
+            publisher = ReflexSpeakingPublisher(args.reflex_speaking_relay_url, writer_token)
+        except ValueError as exc:
+            parser.error(str(exc))
     try:
         state_dir = _private_directory(args.state_dir)
         effectful_tools = frozenset({TOOL_NAME}) if args.enable_local_notes else frozenset()
@@ -202,7 +225,9 @@ def main(argv: list[str] | None = None) -> int:
                 use_sim=False,
             ) as robot:
                 audio = ReachyMediaAudio(robot.media)
-                playback = OwnedPlaybackGate(audio)
+                playback = OwnedPlaybackGate(
+                    SpeakingObservedPlayback(audio, publisher) if publisher else audio
+                )
                 motion = ReachySdkMotion(robot)  # Never armed; stop still requests StopMoveCmd.
                 guard = AsyncTypeSafeGuard(client, policy)
                 conversation = GuardedConversation(
@@ -259,16 +284,27 @@ def main(argv: list[str] | None = None) -> int:
                             "Tools and motion are disabled. "
                             "Keep this terminal private; retain a physical stop."
                         )
-                    operator_turns(
-                        session,
-                        store,
-                        guard,
-                        listen_timeout_s=args.listen_timeout,
-                        required_confirmation=effectful_tools,
-                        sign_ingress=sign_ingress,
-                        screen_sign=conversation.screen_sign if sign_ingress is not None else None,
-                        sign_responder=respond_to_one_sign if args.enable_camera_sign_responses else None,
-                    )
+                    if publisher:
+                        publisher.start()
+                        print(
+                            "Advisory Reflex speaking feed enabled; output queue and operator "
+                            "assertions are not playback receipts."
+                        )
+                    try:
+                        operator_turns(
+                            session,
+                            store,
+                            guard,
+                            listen_timeout_s=args.listen_timeout,
+                            required_confirmation=effectful_tools,
+                            sign_ingress=sign_ingress,
+                            screen_sign=conversation.screen_sign if sign_ingress is not None else None,
+                            sign_responder=respond_to_one_sign if args.enable_camera_sign_responses else None,
+                            on_operator_quiet=publisher.operator_confirmed_quiet if publisher else None,
+                        )
+                    finally:
+                        if publisher:
+                            publisher.close()
         finally:
             ledger.close()
             client.close()

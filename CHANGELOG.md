@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an opt-in, text-free loopback speaking assertion for Reflex after owned audio enqueue, with short heartbeats and operator-declared quiet; it is not an SDK playback receipt, guard, or hardware-validated turn-taking integration.
 - Add a separately enabled operator-triggered sign response path: inbound sign guard, one speech-only local planner proposal, sign-instruction-following output judgment, then owned TTS/audio. Tool, motion, and hard-stop paths remain unavailable from signs; fixture tests do not establish live OCR or robot behavior.
 - Add opt-in one-frame Reachy camera-sign screening with local Tesseract OCR, bounded JPEG/text/time limits, a source-labeled inbound guard record and `conscience.verdict@3` ledger row, and no planner/output path. Signs cannot trigger the speech hard-stop; synthetic JPEG and fake SDK tests do not validate on-robot camera or OCR quality.
 - Enforce four-proposal batch and bounded planner/TTS waits at the owned pipeline boundary, independently of the concrete adapters; reject malformed batches before partial output and hold stalled operations without enqueueing audio.
