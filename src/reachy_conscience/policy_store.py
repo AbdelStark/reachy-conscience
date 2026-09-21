@@ -165,6 +165,8 @@ def preview_cases() -> tuple[DryRunCase, ...]:
                 motion_class="fast_turn",
                 motion_target_json='{"yawDeg":45}',
                 nearest_person_distance="very near",
+                battery="normal",
+                motor_temperature="cool",
             ),
         ),
         DryRunCase(

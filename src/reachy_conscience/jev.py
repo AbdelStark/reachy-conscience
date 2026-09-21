@@ -7,7 +7,16 @@ import threading
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from .guard import Action, GuardAssessment, GuardPolicy, InboundRoute, Judgment, Verdict, decide
+from .guard import (
+    Action,
+    GuardAssessment,
+    GuardPolicy,
+    InboundRoute,
+    Judgment,
+    Verdict,
+    decide,
+    motion_preflight,
+)
 
 BANK = "conscience.guard@0.1.0"
 FAST_PATH_COMMANDS = ("stop", "look_at_speaker", "quiet", "sleep")
@@ -176,6 +185,9 @@ def ask_typesafe(
 
 def guard_typesafe(client: SystemOneClient, action: Action, policy: GuardPolicy) -> Verdict:
     """Fail closed if the SDK/network fails; never executes the proposed action."""
+    preflight = motion_preflight(action)
+    if preflight is not None:
+        return preflight
     try:
         return decide(action, ask_typesafe(client, action, policy), policy)
     except Exception:
@@ -197,6 +209,9 @@ class AsyncTypeSafeGuard:
 
     def _judge(self, action: Action) -> GuardAssessment:
         with self._client_lock:
+            preflight = motion_preflight(action)
+            if preflight is not None:
+                return GuardAssessment(preflight, {}, BANK)
             try:
                 policy = self.policy
                 answers = ask_typesafe(self.client, action, policy)

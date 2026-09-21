@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .guard import Action, GuardAssessment, InboundRoute, Verdict, is_hard_stop
+from .guard import Action, GuardAssessment, InboundRoute, Verdict, is_hard_stop, motion_preflight
 from .ledger import Ledger
 
 
@@ -73,6 +74,29 @@ class MotionOutput(Protocol):
     async def execute(self, motion_class: str, target: Mapping[str, Any]) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class MotionContextSnapshot:
+    """Trusted, same-clock sensor buckets for one proposed motion."""
+
+    nearest_person_distance: str
+    battery: str
+    motor_temperature: str
+    observed_at_monotonic: float
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.observed_at_monotonic, bool)
+            or not isinstance(self.observed_at_monotonic, (int, float))
+            or not math.isfinite(self.observed_at_monotonic)
+            or self.observed_at_monotonic < 0
+        ):
+            raise ValueError("invalid motion context timestamp")
+
+
+class MotionContextProvider(Protocol):
+    async def snapshot(self) -> MotionContextSnapshot: ...
+
+
 class EmergencyStop(Protocol):
     async def stop(self) -> None: ...
 
@@ -92,7 +116,7 @@ class GuardedConversation:
     Tool execution is opt-in for names registered as read-only or effectful.
     Effectful calls additionally require an independent, trusted owner approval
     port for the exact arguments before dispatch.
-    Motion is disabled unless explicitly enabled with an output adapter.
+    Motion is disabled unless explicitly enabled with output and fresh-context adapters.
     """
 
     def __init__(
@@ -109,6 +133,9 @@ class GuardedConversation:
         owner_approval: OwnerApproval | None = None,
         motion: MotionOutput | None = None,
         enable_motion: bool = False,
+        motion_context: MotionContextProvider | None = None,
+        motion_context_timeout_s: float = 0.25,
+        max_motion_context_age_s: float = 1.0,
         ledger: Ledger | None = None,
         guard_timeout_s: float = 2.0,
         approval_timeout_s: float = 30.0,
@@ -120,6 +147,19 @@ class GuardedConversation:
             raise ValueError("approval timeout must be positive")
         if enable_motion and motion is None:
             raise ValueError("motion enabled without an output adapter")
+        if enable_motion and motion_context is None:
+            raise ValueError("motion enabled without a context provider")
+        if (
+            isinstance(motion_context_timeout_s, bool)
+            or not isinstance(motion_context_timeout_s, (int, float))
+            or not math.isfinite(motion_context_timeout_s)
+            or motion_context_timeout_s <= 0
+            or isinstance(max_motion_context_age_s, bool)
+            or not isinstance(max_motion_context_age_s, (int, float))
+            or not math.isfinite(max_motion_context_age_s)
+            or max_motion_context_age_s <= 0
+        ):
+            raise ValueError("invalid motion context timing")
         if read_only_tools & effectful_tools:
             raise ValueError("tool cannot be both read-only and effectful")
         if effectful_tools and (tools is None or owner_approval is None):
@@ -135,6 +175,9 @@ class GuardedConversation:
         self.owner_approval = owner_approval
         self.motion = motion
         self.enable_motion = enable_motion
+        self.motion_context = motion_context
+        self.motion_context_timeout_s = motion_context_timeout_s
+        self.max_motion_context_age_s = max_motion_context_age_s
         self.ledger = ledger
         self.guard_timeout_s = guard_timeout_s
         self.approval_timeout_s = approval_timeout_s
@@ -144,6 +187,11 @@ class GuardedConversation:
 
     async def _judge(self, action: Action) -> GuardAssessment:
         start = time.monotonic()
+        preflight = motion_preflight(action)
+        if preflight is not None:
+            if self.ledger is not None:
+                self.ledger.append(action, preflight, {}, (time.monotonic() - start) * 1000)
+            return GuardAssessment(preflight)
         probabilities: dict[str, float] = {}
         bank: str | None = None
         model: str | None = None
@@ -249,6 +297,7 @@ class GuardedConversation:
             return TurnResult("interrupted")
         tool_arguments_json: str | None = None
         motion_target_json: str | None = None
+        motion_observed_at: float | None = None
         try:
             if isinstance(proposal, Speech):
                 if not proposal.text.strip() or len(proposal.text) > 2000:
@@ -269,16 +318,37 @@ class GuardedConversation:
                     user_request=transcript,
                 )
             elif isinstance(proposal, Motion):
+                if not self.enable_motion or self.motion is None:
+                    return TurnResult("held", reason="motion_not_enabled")
                 try:
                     motion_target_json = _canonical_object(proposal.target, 2048)
                 except (TypeError, ValueError, OverflowError, RecursionError):
                     return TurnResult("held", reason="invalid_motion_target")
+                try:
+                    assert self.motion_context is not None
+                    context = await asyncio.wait_for(
+                        self.motion_context.snapshot(), self.motion_context_timeout_s
+                    )
+                    observed_age = time.monotonic() - context.observed_at_monotonic
+                    if (
+                        not isinstance(context, MotionContextSnapshot)
+                        or not 0 <= observed_age <= self.max_motion_context_age_s
+                    ):
+                        raise ValueError("stale or invalid motion context")
+                except Exception:
+                    return TurnResult("held", reason="motion_context_unavailable")
+                if generation != self._generation:
+                    return TurnResult("interrupted")
+                motion_observed_at = context.observed_at_monotonic
                 action = Action(
                     kind="motion",
                     summary="motion proposal",
                     motion_class=proposal.motion_class,
                     motion_target_json=motion_target_json,
                     user_request=transcript,
+                    nearest_person_distance=context.nearest_person_distance,
+                    battery=context.battery,
+                    motor_temperature=context.motor_temperature,
                 )
             else:
                 return TurnResult("held", reason="unknown_proposal")
@@ -335,6 +405,11 @@ class GuardedConversation:
             if not self.enable_motion or self.motion is None:
                 return TurnResult("held", reason="motion_not_enabled")
             assert motion_target_json is not None
+            if (
+                motion_observed_at is None
+                or not 0 <= time.monotonic() - motion_observed_at <= self.max_motion_context_age_s
+            ):
+                return TurnResult("held", reason="motion_context_unavailable")
             try:
                 await self.motion.execute(proposal.motion_class, json.loads(motion_target_json))
             except Exception:

@@ -1,6 +1,7 @@
 """Pre-output gates are tested against spies, with no robot or paid model call."""
 
 import asyncio
+import time
 
 import pytest
 
@@ -11,6 +12,7 @@ from reachy_conscience import (
     InboundRoute,
     Ledger,
     Motion,
+    MotionContextSnapshot,
     Speech,
     ToolCall,
     Verdict,
@@ -43,6 +45,19 @@ class Ports:
 
     async def stop(self):
         self.events.append(("stop",))
+
+
+class Context:
+    def __init__(self, *, distance="far", battery="normal", temperature="cool", age_s=0.0):
+        self.distance = distance
+        self.battery = battery
+        self.temperature = temperature
+        self.age_s = age_s
+
+    async def snapshot(self):
+        return MotionContextSnapshot(
+            self.distance, self.battery, self.temperature, time.monotonic() - self.age_s
+        )
 
 
 def pipeline(ports, guard, **options):
@@ -196,7 +211,7 @@ async def test_approved_speech_is_synthesized_only_after_guard():
         (
             Motion("small_gesture", {"yawDeg": 5}),
             {"safe_given_state": 0.5, "startle_risk": 0.1},
-            {"enable_motion": True},
+            {"enable_motion": True, "motion_context": Context()},
         ),
     ],
 )
@@ -315,7 +330,7 @@ async def test_malformed_proposal_fails_closed():
     async def guard(_action):
         return Verdict("approve", "ok")
 
-    result = await pipeline(ports, guard).run_turn("move")
+    result = await pipeline(ports, guard, enable_motion=True, motion_context=Context()).run_turn("move")
     assert (result.status, result.reason) == ("held", "invalid_proposal")
     assert all(event[0] != "synthesize" for event in ports.events)
 
@@ -333,6 +348,7 @@ async def test_explicit_read_only_tool_and_motion_dispatch_only_after_guard():
         guard,
         read_only_tools=frozenset({"get_weather"}),
         enable_motion=True,
+        motion_context=Context(),
     ).run_turn("weather and gesture")
     assert (result.status, result.delivered) == ("complete", 2)
     assert ports.events == [
@@ -482,6 +498,8 @@ def test_effectful_tools_require_distinct_trusted_ports():
         )
     with pytest.raises(ValueError, match="owner approval"):
         pipeline(ports, guard, effectful_tools=frozenset({"send_message"}))
+    with pytest.raises(ValueError, match="context provider"):
+        pipeline(ports, guard, enable_motion=True)
 
 
 @pytest.mark.asyncio
@@ -493,12 +511,98 @@ async def test_motion_target_reviewed_is_the_target_dispatched():
         if action.kind == "motion":
             assert action.motion_target_json == '{"rightAntennaDeg":15,"yawDeg":10}'
             assert action.user_request == "look toward Sam"
+            assert (action.nearest_person_distance, action.battery, action.motor_temperature) == (
+                "far",
+                "normal",
+                "cool",
+            )
             target["yawDeg"] = -30
         return Verdict("approve", "ok")
 
-    result = await pipeline(ports, guard, enable_motion=True).run_turn("look toward Sam")
+    result = await pipeline(ports, guard, enable_motion=True, motion_context=Context()).run_turn(
+        "look toward Sam"
+    )
     assert result.status == "complete"
     assert ("execute", "small_gesture", {"rightAntennaDeg": 15, "yawDeg": 10}) in ports.events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "motion_class", "status", "reason"),
+    [
+        (Context(age_s=10), "small_gesture", "held", "motion_context_unavailable"),
+        (Context(battery="critical"), "small_gesture", "hold", "motion_state_unsafe"),
+        (Context(temperature="hot"), "small_gesture", "hold", "motion_state_unsafe"),
+        (Context(distance="very near"), "full_range_head", "hold", "person_too_near"),
+        (Context(distance="unknown"), "small_gesture", "hold", "motion_context_unavailable"),
+    ],
+)
+async def test_motion_context_fails_closed_before_model_or_sink(context, motion_class, status, reason):
+    ports = Ports([Motion(motion_class, {"yawDeg": 5})])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "fixture")
+
+    result = await pipeline(ports, guard, enable_motion=True, motion_context=context).run_turn("look around")
+    assert (result.status, result.reason) == (status, reason)
+    assert ("guard", "motion") not in ports.events
+    assert all(event[0] != "execute" for event in ports.events)
+
+
+@pytest.mark.asyncio
+async def test_motion_context_timeout_and_hard_stop_never_dispatch():
+    ports = Ports([Motion("small_gesture", {"yawDeg": 5})])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowContext:
+        async def snapshot(self):
+            entered.set()
+            await release.wait()
+            return MotionContextSnapshot("far", "normal", "cool", time.monotonic())
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "fixture")
+
+    app = pipeline(
+        ports, guard, enable_motion=True, motion_context=SlowContext(), motion_context_timeout_s=0.001
+    )
+    assert (await app.run_turn("move")).reason == "motion_context_unavailable"
+    assert ("guard", "motion") not in ports.events
+    ports.events.clear()
+    entered.clear()
+    app = pipeline(ports, guard, enable_motion=True, motion_context=SlowContext())
+    pending = asyncio.create_task(app.run_turn("move"))
+    await entered.wait()
+    assert (await app.run_turn("stop")).status == "stopped"
+    release.set()
+    assert (await pending).status == "interrupted"
+    assert ("guard", "motion") not in ports.events
+    assert all(event[0] != "execute" for event in ports.events)
+
+
+@pytest.mark.asyncio
+async def test_motion_context_must_still_be_fresh_after_guard_latency():
+    ports = Ports([Motion("small_gesture", {"yawDeg": 5})])
+
+    async def slow_guard(action):
+        ports.events.append(("guard", action.kind))
+        if action.kind == "motion":
+            await asyncio.sleep(0.03)
+        return Verdict("approve", "fixture")
+
+    result = await pipeline(
+        ports,
+        slow_guard,
+        enable_motion=True,
+        motion_context=Context(),
+        max_motion_context_age_s=0.01,
+    ).run_turn("move")
+    assert (result.status, result.reason) == ("held", "motion_context_unavailable")
+    assert ("guard", "motion") in ports.events
+    assert all(event[0] != "execute" for event in ports.events)
 
 
 @pytest.mark.asyncio
@@ -509,7 +613,7 @@ async def test_invalid_motion_target_never_reaches_guard_or_sink():
         ports.events.append(("guard", action.kind))
         return Verdict("approve", "ok")
 
-    result = await pipeline(ports, guard, enable_motion=True).run_turn("look")
+    result = await pipeline(ports, guard, enable_motion=True, motion_context=Context()).run_turn("look")
     assert (result.status, result.reason) == ("held", "invalid_motion_target")
     assert ("guard", "motion") not in ports.events
     assert all(event[0] != "execute" for event in ports.events)

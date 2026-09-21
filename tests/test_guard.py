@@ -45,7 +45,14 @@ def test_rule_block_and_uncertainty_hold() -> None:
 
 
 def test_missing_or_invalid_judgment_never_approves() -> None:
-    action = Action(kind="motion", motion_class="fast_turn", summary="turn head")
+    action = Action(
+        kind="motion",
+        motion_class="fast_turn",
+        summary="turn head",
+        nearest_person_distance="far",
+        battery="normal",
+        motor_temperature="cool",
+    )
     assert decide(action, {}, GuardPolicy()).kind == "hold"
     assert (
         decide(action, {"safe_given_state": float("nan"), "startle_risk": 0.0}, GuardPolicy()).kind == "hold"
@@ -56,6 +63,27 @@ def test_missing_or_invalid_judgment_never_approves() -> None:
         ).kind
         == "block"
     )
+
+
+def test_motion_context_is_a_deterministic_precondition_even_with_model_approval() -> None:
+    answers = {"safe_given_state": 0.99, "startle_risk": 0.01, "severity": "minor"}
+    base = {
+        "kind": "motion",
+        "motion_class": "full_range_head",
+        "summary": "look around",
+        "nearest_person_distance": "far",
+        "battery": "normal",
+        "motor_temperature": "cool",
+    }
+    assert decide(Action(**base), answers, GuardPolicy()).kind == "approve"
+    for changes, reason in (
+        ({"battery": None}, "motion_context_unavailable"),
+        ({"nearest_person_distance": ["far"]}, "motion_context_unavailable"),
+        ({"battery": "critical"}, "motion_state_unsafe"),
+        ({"motor_temperature": "hot"}, "motion_state_unsafe"),
+        ({"nearest_person_distance": "very near"}, "person_too_near"),
+    ):
+        assert decide(Action(**{**base, **changes}), answers, GuardPolicy()).reason == reason
 
 
 def test_inbound_injection_and_tool_mismatch() -> None:
@@ -123,7 +151,12 @@ def test_uncertain_action_judgments_cannot_approve(kind, answers, verdict, reaso
     if kind == "tool_call":
         options = {"tool": "search"}
     elif kind == "motion":
-        options = {"motion_class": "small_gesture"}
+        options = {
+            "motion_class": "small_gesture",
+            "nearest_person_distance": "far",
+            "battery": "normal",
+            "motor_temperature": "cool",
+        }
     action = Action(kind=kind, summary="test proposal", **options)
     result = decide(action, {**answers, "severity": "minor"}, GuardPolicy())
     assert (result.kind, result.reason) == (verdict, reason)
@@ -153,7 +186,33 @@ def test_adapter_failure_holds() -> None:
         raise TimeoutError("down")
 
     verdict = asyncio.run(
-        guard_action(Action(kind="motion", summary="turn", motion_class="fast_turn"), GuardPolicy(), failing)
+        guard_action(
+            Action(
+                kind="motion",
+                summary="turn",
+                motion_class="fast_turn",
+                nearest_person_distance="far",
+                battery="normal",
+                motor_temperature="cool",
+            ),
+            GuardPolicy(),
+            failing,
+        )
     )
     assert verdict.kind == "hold"
     assert verdict.reason == "judgment_unavailable"
+
+
+def test_generic_guard_skips_model_when_motion_context_is_missing() -> None:
+    calls = 0
+
+    async def ask(_action: Action, _policy: GuardPolicy) -> dict[str, float]:
+        nonlocal calls
+        calls += 1
+        return {}
+
+    verdict = asyncio.run(
+        guard_action(Action(kind="motion", summary="turn", motion_class="small_gesture"), GuardPolicy(), ask)
+    )
+    assert verdict.reason == "motion_context_unavailable"
+    assert calls == 0

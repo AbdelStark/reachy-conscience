@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Require an opt-in motion-context provider with bounded collection and post-guard freshness checks; deterministically hold missing, stale, critical-battery, hot-motor, and larger-motion-near-person states before model or SDK dispatch. The voice host still has no live sensor provider and keeps motion disabled.
 - Arm owned speaker playback lazily only when approved speech reaches its audio sink; blocked, ignored, and no-input turns never call `start_playing()`. Fence stop against in-flight arming/enqueue and request a follow-up halt after a race; fake-port and SDK-boundary tests only.
 - Keep inbound route confidences in dedicated route metadata, not the ledger's top-three safety-judgment probabilities; add an export regression test.
 - Batch inbound Choice routing with the guard judgment; make the operator-paced host fail closed on missing or uncertain routes, handle only ignore and stop in code, and hold unsupported look/quiet/sleep commands. Record validated route proposals in `conscience.verdict@2` without transcript text; fixture tests only.

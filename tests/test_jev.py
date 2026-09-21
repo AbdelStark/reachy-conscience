@@ -70,7 +70,14 @@ def test_questions_use_sdk_score_and_noul_wire_shapes() -> None:
 
 
 def test_one_batched_sdk_request_and_numeric_severity() -> None:
-    action = Action(kind="motion", summary="fast turn", motion_class="fast_turn")
+    action = Action(
+        kind="motion",
+        summary="fast turn",
+        motion_class="fast_turn",
+        nearest_person_distance="far",
+        battery="normal",
+        motor_temperature="cool",
+    )
     client = FakeClient(
         {
             "severity": SimpleNamespace(type="score", score=3.0),
@@ -85,8 +92,26 @@ def test_one_batched_sdk_request_and_numeric_severity() -> None:
     assert guard_typesafe(client, action, GuardPolicy()).kind == "hold"
 
 
+@pytest.mark.asyncio
+async def test_motion_preflight_holds_without_spending_a_model_call() -> None:
+    client = FakeClient({})
+    action = Action(kind="motion", summary="move", motion_class="small_gesture")
+    assert guard_typesafe(client, action, GuardPolicy()).reason == "motion_context_unavailable"
+    assert client.request is None
+    assessment = await AsyncTypeSafeGuard(client, GuardPolicy())(action)
+    assert assessment.verdict.reason == "motion_context_unavailable"
+    assert client.request is None
+
+
 def test_wrong_answer_type_never_approves() -> None:
-    action = Action(kind="motion", summary="fast turn", motion_class="fast_turn")
+    action = Action(
+        kind="motion",
+        summary="fast turn",
+        motion_class="fast_turn",
+        nearest_person_distance="far",
+        battery="normal",
+        motor_temperature="cool",
+    )
     client = FakeClient(
         {
             "severity": SimpleNamespace(type="score", score=1.0),

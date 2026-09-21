@@ -11,6 +11,9 @@ from typing import Literal
 Kind = Literal["utterance", "tool_call", "motion", "inbound"]
 VerdictKind = Literal["approve", "hold", "block"]
 Judgment = float | str
+_MOTION_DISTANCES = frozenset({"very near", "near", "medium", "far"})
+_BATTERY_BUCKETS = frozenset({"critical", "low", "normal"})
+_MOTOR_TEMPERATURES = frozenset({"cool", "warm", "hot"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,8 +132,31 @@ def _severity(value: Judgment | None) -> float | None:
     return number if 0 <= number <= 4 else None
 
 
+def motion_preflight(action: Action) -> Verdict | None:
+    """Independent motion-state holds; model approval cannot override these."""
+    if action.kind != "motion":
+        return None
+    if (
+        not isinstance(action.nearest_person_distance, str)
+        or not isinstance(action.battery, str)
+        or not isinstance(action.motor_temperature, str)
+        or action.nearest_person_distance not in _MOTION_DISTANCES
+        or action.battery not in _BATTERY_BUCKETS
+        or action.motor_temperature not in _MOTOR_TEMPERATURES
+    ):
+        return Verdict("hold", "motion_context_unavailable")
+    if action.battery == "critical" or action.motor_temperature == "hot":
+        return Verdict("hold", "motion_state_unsafe")
+    if action.nearest_person_distance == "very near" and action.motion_class != "small_gesture":
+        return Verdict("hold", "person_too_near")
+    return None
+
+
 def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy) -> Verdict:
     """Missing/invalid answers always hold; no action is executed by this function."""
+    preflight = motion_preflight(action)
+    if preflight is not None:
+        return preflight
     required = [f"violates_rule_{i}" for i in range(1, len(policy.rules) + 1)]
     required_by_kind = {
         "utterance": ["appropriate_for_audience", "discloses_private_info", "tone_hostile"],
@@ -202,6 +228,9 @@ async def guard_action(
     ask: Callable[[Action, GuardPolicy], Awaitable[Mapping[str, Judgment]]],
 ) -> Verdict:
     """Call the model adapter without executing. A failure is a hold, never approval."""
+    preflight = motion_preflight(action)
+    if preflight is not None:
+        return preflight
     try:
         return decide(action, await ask(action, policy), policy)
     except Exception:

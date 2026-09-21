@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 
 import pytest
 
@@ -12,6 +13,7 @@ pytest.importorskip("reachy_mini")
 from reachy_conscience import (  # noqa: E402
     GuardedConversation,
     Motion,
+    MotionContextSnapshot,
     ReachyOutputStop,
     ReachySdkMotion,
     Verdict,
@@ -45,6 +47,11 @@ class FakeClient:
 class FakeRobot:
     def __init__(self) -> None:
         self.client = FakeClient()
+
+
+class Context:
+    async def snapshot(self):
+        return MotionContextSnapshot("far", "normal", "cool", time.monotonic())
 
 
 POSE = {
@@ -129,6 +136,7 @@ async def test_pipeline_guards_motion_before_sdk_and_composite_stop_halts_both_p
         audio=Ports(),
         motion=motion,
         enable_motion=True,
+        motion_context=Context(),
         emergency_stop=stop,
     )
     assert (await app.run_turn("move")).status == "block"
@@ -168,6 +176,7 @@ async def test_pipeline_hard_stop_during_motion_reports_interrupted():
         audio=Ports(),
         motion=motion,
         enable_motion=True,
+        motion_context=Context(),
         emergency_stop=ReachyOutputStop(Audio(), motion),
     )
     pending = asyncio.create_task(app.run_turn("move"))
