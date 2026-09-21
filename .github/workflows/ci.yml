@@ -28,11 +28,13 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest
       - run: uv run python examples/guarded_turn.py
+      - run: uv run conscience-owner-console --help
       - run: uv build
       - run: |
           uv venv "$RUNNER_TEMP/conscience-wheel"
           uv pip install --python "$RUNNER_TEMP/conscience-wheel/bin/python" --no-cache dist/*.whl
-          "$RUNNER_TEMP/conscience-wheel/bin/python" -I -c 'from reachy_conscience import PolicyStore, Ledger, GuardAssessment, ReachyMediaAudio, OwnedVoiceSession; print("fresh wheel import ok")'
+          "$RUNNER_TEMP/conscience-wheel/bin/python" -I -c 'from importlib.resources import files; from reachy_conscience import PolicyStore, Ledger, GuardAssessment, ReachyMediaAudio, OwnedVoiceSession, OwnerConsole; assert files("reachy_conscience").joinpath("assets", "index.html").is_file(); print("fresh wheel and console asset import ok")'
+          "$RUNNER_TEMP/conscience-wheel/bin/conscience-owner-console" --help
 
   robot-api:
     runs-on: ubuntu-latest

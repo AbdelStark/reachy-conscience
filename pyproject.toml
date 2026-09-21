@@ -14,6 +14,9 @@ keywords = ["reachy-mini", "robotics", "jev", "guardrails"]
 classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13", "Topic :: Scientific/Engineering :: Artificial Intelligence"]
 dependencies = []
 
+[project.scripts]
+conscience-owner-console = "reachy_conscience.owner_console_cli:main"
+
 [project.optional-dependencies]
 jev = ["typesafe-sdk>=0.7.0"]
 robot = ["reachy-mini==1.10.0", "numpy>=2,<3"]
