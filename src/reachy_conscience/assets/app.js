@@ -57,6 +57,7 @@ function renderPolicy(policy) {
   registeredTools = policy.registered_tools;
   renderTools(policy.confirm_before);
   byId("preview").disabled = !policy.preview_available;
+  byId("redteam").disabled = !policy.preview_available;
   approvalAvailable = policy.approval_available;
   byId("approval-section").hidden = !approvalAvailable;
 }
@@ -140,6 +141,7 @@ function disconnect() {
   byId("token").disabled = false;
   byId("disconnect").disabled = true;
   byId("preview-results").replaceChildren();
+  byId("redteam-results").replaceChildren();
   status("Token forgotten. Reloading also forgets it.");
 }
 
@@ -196,6 +198,35 @@ async function preview() {
   finally { button.disabled = false; }
 }
 
+async function redteam() {
+  if (!window.confirm("Run 20 self-authored synthetic cases through the configured guard? This can make 20 billable calls. No action will execute.")) return;
+  const button = byId("redteam");
+  button.disabled = true;
+  try {
+    const response = await request("/api/redteam", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ policy: currentPolicy(), confirm_live_calls: true }),
+    });
+    const report = await response.json();
+    const holder = byId("redteam-results");
+    holder.replaceChildren();
+    const heading = document.createElement("h3");
+    heading.textContent = "Synthetic red-team run";
+    const summary = document.createElement("p");
+    summary.textContent = `20 self-authored cases · approved ${report.counts.approve} · held ${report.counts.hold} · blocked ${report.counts.block} · observed p95 ${report.p95_latency_ms.toFixed(1)} ms`;
+    const caveat = document.createElement("p");
+    caveat.textContent = "Case intent is not a correctness label. These counts are not a confusion matrix, safety rate, or live robot measurement.";
+    holder.append(heading, summary, caveat);
+    for (const item of report.results) {
+      const line = document.createElement("p");
+      line.textContent = `${item.case_id} (${item.channel}, ${item.intent}): ${item.verdict} · ${item.reason} · ${item.latency_ms.toFixed(1)} ms`;
+      holder.append(line);
+    }
+    status("Synthetic guard run complete. No action was dispatched.");
+  } catch (error) { status(error.message, true); }
+  finally { button.disabled = false; }
+}
+
 async function exportLedger() {
   try {
     const response = await request("/api/export");
@@ -214,6 +245,7 @@ byId("token").addEventListener("keydown", (event) => { if (event.key === "Enter"
 byId("disconnect").addEventListener("click", disconnect);
 byId("save").addEventListener("click", save);
 byId("preview").addEventListener("click", preview);
+byId("redteam").addEventListener("click", redteam);
 byId("refresh").addEventListener("click", async () => {
   try { await loadLedger(); status("Ledger refreshed."); } catch (error) { status(error.message, true); }
 });

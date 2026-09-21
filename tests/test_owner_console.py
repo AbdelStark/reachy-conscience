@@ -142,6 +142,43 @@ def test_preview_is_explicit_single_purpose_and_dispatch_free(tmp_path):
         assert not (tmp_path / "policy.json").exists()  # Preview did not save or dispatch.
 
 
+def test_redteam_requires_explicit_confirmation_and_returns_synthetic_counts(tmp_path):
+    seen = []
+
+    def guard_factory(_policy):
+        async def guard(action):
+            seen.append(action)
+            return Verdict("hold" if len(seen) == 1 else "block", "fixture")
+
+        return guard
+
+    store = PolicyStore(tmp_path / "policy.json")
+    body = {"policy": candidate(), "confirm_live_calls": True}
+    with OwnerConsole(store, tmp_path / "ledger.db", token=TOKEN) as disabled:
+        assert call(disabled, "POST", "/api/redteam", body=body)[0] == 503
+    with OwnerConsole(store, tmp_path / "ledger.db", token=TOKEN, guard_factory=guard_factory) as console:
+        assert call(console, "POST", "/api/redteam", body=body, token=None)[0] == 401
+        assert call(console, "POST", "/api/redteam", body={**body, "confirm_live_calls": False})[0] == 409
+        assert (
+            call(console, "POST", "/api/redteam", body=body, headers={"Origin": "http://evil.example"})[0]
+            == 403
+        )
+        assert seen == []
+        status, _, raw = call(console, "POST", "/api/redteam", body=body)
+        assert status == 200
+        report = json.loads(raw)
+        assert report["schema"] == "conscience.synthetic-redteam-report@1"
+        assert report["synthetic"] is True
+        assert report["counts"] == {"approve": 0, "hold": 1, "block": 19}
+        assert len(report["results"]) == len(seen) == 20
+        assert report["p95_latency_ms"] >= 0
+        fields = {"case_id", "channel", "intent", "verdict", "reason", "latency_ms"}
+        assert all(set(item) == fields for item in report["results"])
+        assert "untrusted_text" not in raw.decode()
+        assert not (tmp_path / "policy.json").exists()
+        assert not (tmp_path / "ledger.db").exists()
+
+
 def test_ledger_is_private_and_export_omits_even_stored_summaries(tmp_path):
     ledger_path = tmp_path / "ledger.db"
     ledger = Ledger(ledger_path, store_summaries=True)

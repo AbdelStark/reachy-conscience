@@ -12,7 +12,7 @@
     <header>
       <span class="eyebrow">Reachy Conscience</span>
       <h1>Owner console</h1>
-      <p>Local policy and verdicts. This page cannot move the robot, speak, or approve a tool call.</p>
+      <p>Local policy and verdicts. This page cannot move the robot or speak. When the host enables a tool, its exact owner approval appears separately.</p>
     </header>
 
     <section class="card" aria-labelledby="access-title">
@@ -73,9 +73,11 @@
         <div class="row actions">
           <button id="save" type="button">Save policy</button>
           <button id="preview" type="button" class="secondary">Preview five synthetic cases</button>
+          <button id="redteam" type="button" class="secondary">Run 20 synthetic red-team cases</button>
         </div>
-        <p class="hint warning">Preview is optional and can make five billable guard calls. It never dispatches audio, tools, or motion. Saving a policy does not change an already-running guard instance; the host must reload it.</p>
+        <p class="hint warning">These optional runs can make five or 20 billable guard calls. They never dispatch audio, tools, or motion. The red-team prompts are self-authored, not real-session data, and their intent labels are not ground-truth safety outcomes. Saving a policy does not change an already-running guard instance; the host must reload it.</p>
         <div id="preview-results" aria-live="polite"></div>
+        <div id="redteam-results" aria-live="polite"></div>
       </section>
 
       <section class="card" aria-labelledby="ledger-title">

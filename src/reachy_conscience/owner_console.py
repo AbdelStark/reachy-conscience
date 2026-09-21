@@ -23,6 +23,7 @@ from .ledger import Ledger
 from .owner_approval import OwnerApprovalBroker
 from .pipeline import Guard
 from .policy_store import PolicyStore, dry_run_policy, policy_from_lines
+from .redteam import run_redteam
 
 MAX_BODY_BYTES = 8_192
 _ASSETS = {
@@ -88,8 +89,9 @@ class OwnerConsole:
 
     The bearer token is deliberately kept only in memory by the browser UI.
     A real guard factory is optional and only called by an owner-confirmed
-    five-case preview. The caller owns the token and must protect terminal
-    output, local processes, the policy directory, and the ledger database.
+    five-case preview or 20-case synthetic red-team run. The caller owns the
+    token and must protect terminal output, local processes, the policy
+    directory, and the ledger database.
     """
 
     def __init__(
@@ -277,7 +279,7 @@ class OwnerConsole:
                 if origin is not None and origin != console.url.rstrip("/"):
                     self._error(403, "invalid origin")
                     return
-                if self.path not in {"/api/policy", "/api/preview", "/api/approval"}:
+                if self.path not in {"/api/policy", "/api/preview", "/api/redteam", "/api/approval"}:
                     self._error(404, "not found")
                     return
                 try:
@@ -316,18 +318,44 @@ class OwnerConsole:
                         self._error(503, "live preview is not configured")
                         return
                     if not isinstance(body, dict) or set(body) != {"policy", "confirm_live_calls"}:
-                        raise ValueError("invalid preview fields")
+                        raise ValueError("invalid guard-run fields")
                     if body["confirm_live_calls"] is not True:
-                        self._error(409, "confirm five guard calls before preview")
+                        self._error(409, "confirm guard calls before running synthetic cases")
                         return
                     policy = _candidate(body["policy"], console.policy_store)
                     if not console._preview_lock.acquire(blocking=False):
                         self._error(409, "preview already running")
                         return
                     try:
-                        results = asyncio.run(dry_run_policy(console.guard_factory(policy)))
+                        guard = console.guard_factory(policy)
+                        if self.path == "/api/redteam":
+                            report = asyncio.run(run_redteam(guard))
+                        else:
+                            results = asyncio.run(dry_run_policy(guard))
                     finally:
                         console._preview_lock.release()
+                    if self.path == "/api/redteam":
+                        self._json(
+                            200,
+                            {
+                                "schema": "conscience.synthetic-redteam-report@1",
+                                "synthetic": True,
+                                "counts": report.counts,
+                                "p95_latency_ms": report.p95_latency_ms,
+                                "results": [
+                                    {
+                                        "case_id": item.case_id,
+                                        "channel": item.channel,
+                                        "intent": item.intent,
+                                        "verdict": item.verdict.kind,
+                                        "reason": item.verdict.reason,
+                                        "latency_ms": item.latency_ms,
+                                    }
+                                    for item in report.results
+                                ],
+                            },
+                        )
+                        return
                     self._json(
                         200,
                         {

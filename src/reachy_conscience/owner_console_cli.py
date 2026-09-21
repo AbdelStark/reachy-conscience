@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--enable-typesafe-preview",
         action="store_true",
-        help="Allow confirmed five-case TypeSafe preview calls; requires the jev extra and API key",
+        help="Allow confirmed five-case preview or 20-case synthetic red-team calls",
     )
     args = parser.parse_args(argv)
     try:
