@@ -26,6 +26,7 @@ def action_state(action: Action, policy: GuardPolicy) -> dict[str, Any]:
     record: dict[str, Any] = {"kind": action.kind, "summary": action.summary}
     for key in (
         "tool",
+        "tool_arguments_json",
         "motion_class",
         "untrusted_text",
         "text",
@@ -74,14 +75,17 @@ def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
         },
         "tool_call": {
             "matches_request": (
-                "Does action.tool with its summary do exactly what "
+                "Does action.tool with action.tool_arguments_json do exactly what "
                 "action.user_request asked and nothing more?"
             ),
             "irreversible": (
-                "Would the effect of action.tool be hard to undo, such as "
+                "Would the effect of action.tool with action.tool_arguments_json be hard to undo, such as "
                 "sending, purchasing, deleting, or posting?"
             ),
-            "needs_confirmation": "Would a careful assistant ask the owner before this tool call?",
+            "needs_confirmation": (
+                "Would a careful assistant ask the owner before action.tool is called "
+                "with action.tool_arguments_json?"
+            ),
         },
         "motion": {
             "safe_given_state": (

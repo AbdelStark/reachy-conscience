@@ -15,6 +15,21 @@ def test_confirm_before_overrides_model() -> None:
     assert decide(action, {"violates_rule_1": 0.01}, policy).kind == "hold"
 
 
+def test_confirm_before_cannot_override_rule_block_or_missing_judgment() -> None:
+    action = Action(kind="tool_call", tool="send_message", summary="send a reminder")
+    policy = GuardPolicy(rules=("Never send secrets",), confirm_before=frozenset({"send_message"}))
+    assert decide(action, {}, policy).reason == "missing_or_invalid_judgment"
+    answers = {
+        "violates_rule_1": 0.9,
+        "matches_request": 0.9,
+        "irreversible": 0.9,
+        "needs_confirmation": 0.9,
+        "severity": "minor",
+    }
+    assert decide(action, answers, policy).kind == "block"
+    assert decide(action, {**answers, "violates_rule_1": 0.1}, policy).reason == "confirm_before"
+
+
 def test_rule_block_and_uncertainty_hold() -> None:
     policy = GuardPolicy(rules=("Never reveal the Wi-Fi password",))
     action = Action(kind="utterance", summary="reply to user")

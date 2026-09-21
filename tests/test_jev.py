@@ -31,6 +31,19 @@ def test_action_state_separates_rules_and_untrusted_text() -> None:
     assert "SYSTEM" not in str(state["rules"])
 
 
+def test_tool_state_exposes_exact_arguments_to_guard_model() -> None:
+    action = Action(
+        kind="tool_call",
+        summary="message Sam",
+        tool="send_message",
+        tool_arguments_json='{"text":"Running late","to":"Sam"}',
+        user_request="please message Sam",
+    )
+    state = action_state(action, GuardPolicy())
+    assert state["action"]["tool_arguments_json"] == '{"text":"Running late","to":"Sam"}'
+    assert state["action"]["user_request"] == "please message Sam"
+
+
 def test_questions_use_sdk_score_and_noul_wire_shapes() -> None:
     action = Action(kind="motion", summary="fast turn", motion_class="fast_turn")
     questions = guard_questions(action, GuardPolicy(rules=("Do not startle a nearby person",)))

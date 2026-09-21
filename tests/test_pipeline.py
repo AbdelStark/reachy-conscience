@@ -26,6 +26,10 @@ class Ports:
     async def execute(self, *args):
         self.events.append(("execute", *args))
 
+    async def authorize(self, name, arguments_json):
+        self.events.append(("owner_approval", name, arguments_json))
+        return True
+
     async def stop(self):
         self.events.append(("stop",))
 
@@ -209,3 +213,142 @@ async def test_explicit_read_only_tool_and_motion_dispatch_only_after_guard():
         ("guard", "motion"),
         ("execute", "small_gesture", {}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_effectful_tool_needs_exact_argument_owner_approval():
+    arguments = {"to": "Sam", "text": "Running late"}
+    ports = Ports([ToolCall("send_message", arguments, "send Sam a message")])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        if action.kind == "tool_call":
+            assert action.tool_arguments_json == '{"text":"Running late","to":"Sam"}'
+            assert action.user_request == "please send Sam the message"
+            arguments["to"] = "Mallory"  # planner-owned state cannot change dispatched arguments
+        return Verdict("approve", "ok")
+
+    app = pipeline(
+        ports,
+        guard,
+        effectful_tools=frozenset({"send_message"}),
+        owner_approval=ports,
+    )
+    result = await app.run_turn("please send Sam the message")
+    assert result.status == "complete"
+    assert ports.events == [
+        ("guard", "inbound"),
+        ("plan", "please send Sam the message"),
+        ("guard", "tool_call"),
+        ("owner_approval", "send_message", '{"text":"Running late","to":"Sam"}'),
+        ("execute", "send_message", {"text": "Running late", "to": "Sam"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_only_confirmation_hold_can_resume_with_owner_approval():
+    ports = Ports([ToolCall("send_message", {"to": "Sam"}, "message Sam")])
+
+    async def guard(action):
+        return Verdict("hold", "confirm_before") if action.kind == "tool_call" else Verdict("approve", "ok")
+
+    app = pipeline(ports, guard, effectful_tools=frozenset({"send_message"}), owner_approval=ports)
+    assert (await app.run_turn("message Sam")).status == "complete"
+    assert ("execute", "send_message", {"to": "Sam"}) in ports.events
+
+    async def uncertain(action):
+        return Verdict("hold", "uncertain_rule_1") if action.kind == "tool_call" else Verdict("approve", "ok")
+
+    ports.events.clear()
+    app = pipeline(ports, uncertain, effectful_tools=frozenset({"send_message"}), owner_approval=ports)
+    assert (await app.run_turn("message Sam")).reason == "uncertain_rule_1"
+    assert all(event[0] not in ("owner_approval", "execute") for event in ports.events)
+
+
+@pytest.mark.asyncio
+async def test_effectful_tool_denial_and_timeout_never_dispatch():
+    ports = Ports([ToolCall("send_message", {"to": "Sam"}, "message Sam")])
+
+    async def guard(_action):
+        return Verdict("approve", "ok")
+
+    async def deny(_name, _arguments_json):
+        return False
+
+    ports.authorize = deny
+    app = pipeline(ports, guard, effectful_tools=frozenset({"send_message"}), owner_approval=ports)
+    assert (await app.run_turn("message Sam")).reason == "owner_approval_denied"
+    assert all(event[0] != "execute" for event in ports.events)
+
+    async def slow(_name, _arguments_json):
+        await asyncio.sleep(0.1)
+        return True
+
+    ports.events.clear()
+    ports.authorize = slow
+    app = pipeline(
+        ports,
+        guard,
+        effectful_tools=frozenset({"send_message"}),
+        owner_approval=ports,
+        approval_timeout_s=0.001,
+    )
+    assert (await app.run_turn("message Sam")).reason == "owner_approval_unavailable"
+    assert all(event[0] != "execute" for event in ports.events)
+
+
+@pytest.mark.asyncio
+async def test_hard_stop_during_owner_approval_prevents_late_tool_dispatch():
+    ports = Ports([ToolCall("send_message", {"to": "Sam"}, "message Sam")])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def guard(_action):
+        return Verdict("approve", "ok")
+
+    async def authorize(_name, _arguments_json):
+        entered.set()
+        await release.wait()
+        return True
+
+    ports.authorize = authorize
+    app = pipeline(ports, guard, effectful_tools=frozenset({"send_message"}), owner_approval=ports)
+    pending = asyncio.create_task(app.run_turn("message Sam"))
+    await entered.wait()
+    assert (await app.run_turn("stop")).status == "stopped"
+    release.set()
+    assert (await pending).status == "interrupted"
+    assert all(event[0] != "execute" for event in ports.events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [{"amount": float("nan")}, {"amount": object()}, {1: "value"}])
+async def test_invalid_tool_arguments_fail_before_guard_or_dispatch(arguments):
+    ports = Ports([ToolCall("send_message", arguments, "message Sam")])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "ok")
+
+    result = await pipeline(ports, guard, read_only_tools=frozenset({"send_message"})).run_turn("message Sam")
+    assert result.status == "held"
+    assert ("guard", "tool_call") not in ports.events
+    assert all(event[0] != "execute" for event in ports.events)
+
+
+def test_effectful_tools_require_distinct_trusted_ports():
+    ports = Ports()
+
+    async def guard(_action):
+        return Verdict("approve", "ok")
+
+    with pytest.raises(ValueError, match="both read-only and effectful"):
+        pipeline(
+            ports,
+            guard,
+            read_only_tools=frozenset({"send_message"}),
+            effectful_tools=frozenset({"send_message"}),
+            owner_approval=ports,
+        )
+    with pytest.raises(ValueError, match="owner approval"):
+        pipeline(ports, guard, effectful_tools=frozenset({"send_message"}))

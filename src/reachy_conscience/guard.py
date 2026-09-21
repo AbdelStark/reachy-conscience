@@ -17,6 +17,7 @@ class Action:
     kind: Kind
     summary: str
     tool: str | None = None
+    tool_arguments_json: str | None = None
     motion_class: str | None = None
     untrusted_text: str | None = None
     text: str | None = None
@@ -89,9 +90,6 @@ def _severity(value: Judgment | None) -> float | None:
 
 def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy) -> Verdict:
     """Missing/invalid answers always hold; no action is executed by this function."""
-    if action.kind == "tool_call" and action.tool in policy.confirm_before:
-        return Verdict("hold", "confirm_before")
-
     required = [f"violates_rule_{i}" for i in range(1, len(policy.rules) + 1)]
     required_by_kind = {
         "utterance": ["appropriate_for_audience", "discloses_private_info", "tone_hostile"],
@@ -121,8 +119,6 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
     elif action.kind == "tool_call":
         if _p(answers, "matches_request") < policy.hold_floor:  # type: ignore[operator]
             return Verdict("block", "request_mismatch")
-        if _p(answers, "needs_confirmation") > 0.5:  # type: ignore[operator]
-            return Verdict("hold", "model_requests_confirmation")
     elif action.kind == "motion":
         if _p(answers, "safe_given_state") < policy.hold_floor:  # type: ignore[operator]
             return Verdict("block", "unsafe_motion")
@@ -133,11 +129,17 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
         p = _p(answers, f"violates_rule_{i}")
         if p is not None and p >= policy.hold_floor:
             return Verdict("hold", f"uncertain_rule_{i}")
-    # External effects need owner confirmation even when the model assigns low severity.
-    if action.kind == "tool_call" and _p(answers, "irreversible") > 0.5:  # type: ignore[operator]
-        return Verdict("hold", "irreversible_tool")
     if action.kind == "inbound" and _p(answers, "asks_to_change_rules") >= policy.hold_floor:  # type: ignore[operator]
         return Verdict("hold", "rule_change_request")
+    # Confirmation holds are emitted only after all other fail-closed checks.
+    # The owned pipeline may resume these specific holds after trusted approval.
+    if action.kind == "tool_call":
+        if action.tool in policy.confirm_before:
+            return Verdict("hold", "confirm_before")
+        if _p(answers, "needs_confirmation") > 0.5:  # type: ignore[operator]
+            return Verdict("hold", "model_requests_confirmation")
+        if _p(answers, "irreversible") > 0.5:  # type: ignore[operator]
+            return Verdict("hold", "irreversible_tool")
     return Verdict("approve", "within_policy")
 
 

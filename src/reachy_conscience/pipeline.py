@@ -7,6 +7,7 @@ No upstream Conversation App output queue is used here.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ class Motion:
 
 Proposal = Speech | ToolCall | Motion
 Guard = Callable[[Action], Awaitable[Verdict]]
+_CONFIRMABLE_HOLDS = frozenset({"confirm_before", "model_requests_confirmation", "irreversible_tool"})
 
 
 class Planner(Protocol):
@@ -52,6 +54,10 @@ class AudioOutput(Protocol):
 
 class ToolOutput(Protocol):
     async def execute(self, name: str, arguments: Mapping[str, Any]) -> None: ...
+
+
+class OwnerApproval(Protocol):
+    async def authorize(self, name: str, arguments_json: str) -> bool: ...
 
 
 class MotionOutput(Protocol):
@@ -74,7 +80,9 @@ class GuardedConversation:
 
     The caller supplies a proposal-only planner and independently owned output
     adapters. A held action stops the turn; this MVP has no automatic resume.
-    Tool execution is opt-in for names the owner has registered as read-only.
+    Tool execution is opt-in for names registered as read-only or effectful.
+    Effectful calls additionally require an independent, trusted owner approval
+    port for the exact arguments before dispatch.
     Motion is disabled unless explicitly enabled with an output adapter.
     """
 
@@ -88,26 +96,38 @@ class GuardedConversation:
         emergency_stop: EmergencyStop,
         tools: ToolOutput | None = None,
         read_only_tools: frozenset[str] = frozenset(),
+        effectful_tools: frozenset[str] = frozenset(),
+        owner_approval: OwnerApproval | None = None,
         motion: MotionOutput | None = None,
         enable_motion: bool = False,
         ledger: Ledger | None = None,
         guard_timeout_s: float = 2.0,
+        approval_timeout_s: float = 30.0,
     ) -> None:
         if guard_timeout_s <= 0:
             raise ValueError("guard timeout must be positive")
+        if approval_timeout_s <= 0:
+            raise ValueError("approval timeout must be positive")
         if enable_motion and motion is None:
             raise ValueError("motion enabled without an output adapter")
+        if read_only_tools & effectful_tools:
+            raise ValueError("tool cannot be both read-only and effectful")
+        if effectful_tools and (tools is None or owner_approval is None):
+            raise ValueError("effectful tools require output and owner approval adapters")
         self.planner = planner
         self.guard = guard
         self.synthesizer = synthesizer
         self.audio = audio
         self.emergency_stop = emergency_stop
         self.tools = tools
-        self.read_only_tools = read_only_tools
+        self.read_only_tools = frozenset(read_only_tools)
+        self.effectful_tools = frozenset(effectful_tools)
+        self.owner_approval = owner_approval
         self.motion = motion
         self.enable_motion = enable_motion
         self.ledger = ledger
         self.guard_timeout_s = guard_timeout_s
+        self.approval_timeout_s = approval_timeout_s
         self._turn_lock = asyncio.Lock()
         self._generation = 0
 
@@ -147,15 +167,16 @@ class GuardedConversation:
                 return TurnResult("interrupted")
             delivered = 0
             for proposal in proposals:
-                result = await self._emit(proposal, generation)
+                result = await self._emit(proposal, generation, transcript)
                 if result.status != "delivered":
                     return TurnResult(result.status, delivered, result.reason)
                 delivered += 1
             return TurnResult("complete", delivered)
 
-    async def _emit(self, proposal: Proposal, generation: int) -> TurnResult:
+    async def _emit(self, proposal: Proposal, generation: int, transcript: str) -> TurnResult:
         if generation != self._generation:
             return TurnResult("interrupted")
+        tool_arguments_json: str | None = None
         try:
             if isinstance(proposal, Speech):
                 if not proposal.text.strip() or len(proposal.text) > 2000:
@@ -164,17 +185,38 @@ class GuardedConversation:
             elif isinstance(proposal, ToolCall):
                 if not proposal.name or len(proposal.name) > 80 or not proposal.summary.strip():
                     return TurnResult("held", reason="invalid_tool")
-                action = Action(kind="tool_call", summary=proposal.summary[:140], tool=proposal.name)
+                if not isinstance(proposal.arguments, Mapping) or any(
+                    not isinstance(key, str) for key in proposal.arguments
+                ):
+                    return TurnResult("held", reason="invalid_tool_arguments")
+                tool_arguments_json = json.dumps(
+                    proposal.arguments, sort_keys=True, separators=(",", ":"), allow_nan=False
+                )
+                if len(tool_arguments_json.encode("utf-8")) > 4096:
+                    return TurnResult("held", reason="invalid_tool_arguments")
+                action = Action(
+                    kind="tool_call",
+                    summary=proposal.summary[:140],
+                    tool=proposal.name,
+                    tool_arguments_json=tool_arguments_json,
+                    user_request=transcript,
+                )
             elif isinstance(proposal, Motion):
                 action = Action(kind="motion", summary="motion proposal", motion_class=proposal.motion_class)
             else:
                 return TurnResult("held", reason="unknown_proposal")
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError, RecursionError):
             return TurnResult("held", reason="invalid_proposal")
         verdict = await self._judge(action)
         if generation != self._generation:
             return TurnResult("interrupted")
-        if verdict.kind != "approve":
+        needs_owner_confirmation = (
+            isinstance(proposal, ToolCall)
+            and proposal.name in self.effectful_tools
+            and verdict.kind == "hold"
+            and verdict.reason in _CONFIRMABLE_HOLDS
+        )
+        if verdict.kind != "approve" and not needs_owner_confirmation:
             return TurnResult(verdict.kind, reason=verdict.reason)
         if isinstance(proposal, Speech):
             try:
@@ -190,10 +232,24 @@ class GuardedConversation:
             except Exception:
                 return TurnResult("output_error", reason="audio_sink_failed")
         elif isinstance(proposal, ToolCall):
-            if self.tools is None or proposal.name not in self.read_only_tools:
+            if self.tools is None or proposal.name not in self.read_only_tools | self.effectful_tools:
                 return TurnResult("held", reason="tool_not_enabled")
+            assert tool_arguments_json is not None
+            if proposal.name in self.effectful_tools:
+                assert self.owner_approval is not None
+                try:
+                    authorized = await asyncio.wait_for(
+                        self.owner_approval.authorize(proposal.name, tool_arguments_json),
+                        self.approval_timeout_s,
+                    )
+                except Exception:
+                    return TurnResult("held", reason="owner_approval_unavailable")
+                if generation != self._generation:
+                    return TurnResult("interrupted")
+                if authorized is not True:
+                    return TurnResult("held", reason="owner_approval_denied")
             try:
-                await self.tools.execute(proposal.name, proposal.arguments)
+                await self.tools.execute(proposal.name, json.loads(tool_arguments_json))
             except Exception:
                 return TurnResult("output_error", reason="tool_sink_failed")
         elif isinstance(proposal, Motion):
