@@ -2118,6 +2118,9 @@ asr = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
+events = [
+    { name = "websockets" },
+]
 jev = [
     { name = "typesafe-sdk" },
 ]
@@ -2149,8 +2152,9 @@ requires-dist = [
     { name = "reachy-jev", git = "https://github.com/AbdelStark/reachy-jev.git?subdirectory=python&rev=5a746eea3929a8a258f04b565085202a063048dd" },
     { name = "reachy-mini", marker = "extra == 'robot'", specifier = "==1.10.0" },
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
+    { name = "websockets", marker = "extra == 'events'", specifier = "==15.0.1" },
 ]
-provides-extras = ["jev", "robot", "asr", "ocr"]
+provides-extras = ["jev", "robot", "asr", "ocr", "events"]
 
 [package.metadata.requires-dev]
 dev = [

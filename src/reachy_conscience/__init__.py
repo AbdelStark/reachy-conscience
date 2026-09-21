@@ -35,6 +35,7 @@ from .policy_store import PolicyStore, dry_run_policy, policy_from_lines, previe
 from .proposal_planner import LocalOllamaPlanner, decode_proposals
 from .reachy_audio import AudioChunk, ReachyMediaAudio
 from .reachy_motion import BoundedPose, ReachyOutputStop, ReachySdkMotion, bounded_pose
+from .reflex_events import ReflexEventInbox, ReflexEventMonitor, ReflexHint
 from .session import OwnedPlaybackGate, OwnedVoiceSession
 
 __all__ = [
@@ -87,4 +88,7 @@ __all__ = [
     "ReachyOutputStop",
     "ReachySdkMotion",
     "bounded_pose",
+    "ReflexEventInbox",
+    "ReflexEventMonitor",
+    "ReflexHint",
 ]

@@ -33,6 +33,7 @@ from .policy_store import PolicyStore
 from .proposal_planner import LocalOllamaPlanner
 from .reachy_audio import ReachyMediaAudio
 from .reachy_motion import ReachyOutputStop, ReachySdkMotion
+from .reflex_events import ReflexEventMonitor, ReflexHint
 from .reflex_speaking import ReflexSpeakingPublisher, SpeakingObservedPlayback
 from .session import OwnedPlaybackGate, OwnedVoiceSession
 
@@ -59,6 +60,7 @@ def operator_turns(
     screen_sign: Callable[[str], Awaitable[TurnResult]] | None = None,
     sign_responder: Callable[[], Awaitable[TurnResult]] | None = None,
     on_operator_quiet: Callable[[], None] | None = None,
+    read_reflex_hint: Callable[[], ReflexHint | None] | None = None,
 ) -> None:
     """Reload policy only between turns; stop owned output on every exit.
 
@@ -75,18 +77,29 @@ def operator_turns(
     try:
         while True:
             try:
-                options = (
-                    "Enter: listen once; s: inspect sign; "
-                    + ("r: respond to sign; " if sign_responder else "")
-                    + "q: stop"
-                    if sign_ingress
-                    else "Enter: listen once; q: stop"
-                )
+                commands = ["Enter: listen once"]
+                if sign_ingress is not None:
+                    commands.append("s: inspect sign")
+                if sign_responder is not None:
+                    commands.append("r: respond to sign")
+                if read_reflex_hint is not None:
+                    commands.append("e: inspect Reflex hint")
+                commands.append("q: stop")
+                options = "; ".join(commands)
                 command = prompt(f"Wait until the speaker is quiet. {options} > ")
             except EOFError:
                 break
             if command.strip().lower() in {"q", "quit"}:
                 break
+            if command.strip().lower() == "e" and read_reflex_hint is not None:
+                hint = read_reflex_hint()
+                if hint is None:
+                    report("No fresh Reflex hint; no output dispatched.")
+                else:
+                    label = f"{hint.kind} {hint.person}" if hint.person else hint.kind
+                    probability = f" · score {hint.probability:.2f}" if hint.probability is not None else ""
+                    report(f"Reflex hint: {label}{probability}; advisory only; no output dispatched.")
+                continue
             if command.strip().lower() == "r" and sign_responder is not None:
                 if on_operator_quiet is not None:
                     on_operator_quiet()
@@ -158,6 +171,13 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--reflex-event-url",
+        help=(
+            "Opt in to read-only Reflex hints at ws://127.0.0.1:<port>/v1/events; "
+            "token comes from REFLEX_EVENT_SUBSCRIBER_TOKEN"
+        ),
+    )
+    parser.add_argument(
         "--enable-local-notes",
         action="store_true",
         help="Opt in to exact-owner-approved local notes; no external messages",
@@ -193,6 +213,13 @@ def main(argv: list[str] | None = None) -> int:
         writer_token = os.environ.get("REFLEX_SPEAKING_WRITER_TOKEN", "")
         try:
             publisher = ReflexSpeakingPublisher(args.reflex_speaking_relay_url, writer_token)
+        except ValueError as exc:
+            parser.error(str(exc))
+    event_monitor = None
+    if args.reflex_event_url:
+        subscriber_token = os.environ.get("REFLEX_EVENT_SUBSCRIBER_TOKEN", "")
+        try:
+            event_monitor = ReflexEventMonitor(args.reflex_event_url, subscriber_token)
         except ValueError as exc:
             parser.error(str(exc))
     try:
@@ -284,13 +311,19 @@ def main(argv: list[str] | None = None) -> int:
                             "Tools and motion are disabled. "
                             "Keep this terminal private; retain a physical stop."
                         )
-                    if publisher:
-                        publisher.start()
-                        print(
-                            "Advisory Reflex speaking feed enabled; output queue and operator "
-                            "assertions are not playback receipts."
-                        )
                     try:
+                        if publisher:
+                            publisher.start()
+                            print(
+                                "Advisory Reflex speaking feed enabled; output queue and operator "
+                                "assertions are not playback receipts."
+                            )
+                        if event_monitor:
+                            event_monitor.start()
+                            print(
+                                "Read-only Reflex event hints enabled; they cannot trigger "
+                                "robot output or listening."
+                            )
                         operator_turns(
                             session,
                             store,
@@ -301,8 +334,11 @@ def main(argv: list[str] | None = None) -> int:
                             screen_sign=conversation.screen_sign if sign_ingress is not None else None,
                             sign_responder=respond_to_one_sign if args.enable_camera_sign_responses else None,
                             on_operator_quiet=publisher.operator_confirmed_quiet if publisher else None,
+                            read_reflex_hint=event_monitor.latest if event_monitor else None,
                         )
                     finally:
+                        if event_monitor:
+                            event_monitor.close()
                         if publisher:
                             publisher.close()
         finally:

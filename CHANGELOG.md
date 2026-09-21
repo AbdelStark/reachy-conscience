@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an opt-in, read-only Reflex event monitor with an exact loopback subscriber token, strict text-free schema/sequence/freshness checks, short-lived hints, and an operator `e` inspection command. No hint opens capture or drives output; fake WebSocket and actual Reflex-relay software tests are not joined-app or robot validation.
 - Join a cancelled microphone task even when an external stop's output-halt request fails; a fake-port race test holds capture cleanup open to verify stop cannot return early. This does not establish physical silence.
 - Add a self-checking no-robot owned voice-session walkthrough showing approved speech, pre-synthesis blocked output, and direct local stop across separate fake ports; CI runs it on both supported test Pythons.
 - Add an opt-in, text-free loopback speaking assertion for Reflex after owned audio enqueue, with short heartbeats and operator-declared quiet; it is not an SDK playback receipt, guard, or hardware-validated turn-taking integration.

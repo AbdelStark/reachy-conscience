@@ -10,6 +10,7 @@ import pytest
 
 from reachy_conscience import GuardPolicy, LocalNotesTool, OwnerApprovalBroker, PolicyStore, TurnResult
 from reachy_conscience.owner_console import OwnerConsole
+from reachy_conscience.reflex_events import ReflexHint
 from reachy_conscience.reflex_speaking import SpeakingObservedPlayback
 from reachy_conscience.voice_host import main, operator_turns
 
@@ -186,6 +187,29 @@ def test_operator_quiet_assertion_precedes_capture_but_not_unknown_commands(tmp_
     assert session.stops == 1
 
 
+def test_operator_inspects_only_fresh_reflex_hints_without_opening_capture(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    session = FakeSession(guard)
+    reports = []
+    hints = iter([ReflexHint("user_addressed", 4, "p1", 0.83, 1), None])
+    commands = iter(["e", "e", "q"])
+    operator_turns(
+        session,
+        store,
+        guard,
+        prompt=lambda _message: next(commands),
+        report=reports.append,
+        read_reflex_hint=lambda: next(hints),
+    )
+    assert reports == [
+        "Reflex hint: user_addressed p1 · score 0.83; advisory only; no output dispatched.",
+        "No fresh Reflex hint; no output dispatched.",
+    ]
+    assert session.seen_rules == []
+    assert session.stops == 1
+
+
 def test_sign_response_failure_requests_owned_stop_instead_of_another_turn(tmp_path):
     store = PolicyStore(tmp_path / "policy.json")
     guard = SimpleNamespace(policy=store.load())
@@ -295,20 +319,49 @@ def test_reflex_speaking_option_needs_a_private_writer_token_before_state_creati
     assert not (tmp_path / "state").exists()
 
 
+def test_reflex_event_option_needs_a_private_subscriber_token_before_state_creation(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr("reachy_conscience.voice_host.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.delenv("REFLEX_EVENT_SUBSCRIBER_TOKEN", raising=False)
+    with pytest.raises(SystemExit) as missing_token:
+        main(
+            [
+                "--state-dir",
+                str(tmp_path / "state"),
+                "--model-path",
+                str(tmp_path / "model"),
+                "--ollama-model",
+                "local-model",
+                "--robot-host",
+                "127.0.0.1",
+                "--connection-mode",
+                "localhost_only",
+                "--acknowledge-experimental-hardware",
+                "--reflex-event-url",
+                "ws://127.0.0.1:8048/v1/events",
+            ]
+        )
+    assert missing_token.value.code == 2
+    assert "subscriber token" in capsys.readouterr().err
+    assert not (tmp_path / "state").exists()
+
+
 @pytest.mark.parametrize(
-    ("enable_notes", "enable_signs", "enable_responses", "enable_reflex"),
+    ("enable_notes", "enable_signs", "enable_responses", "enable_reflex", "enable_events"),
     [
-        (False, False, False, False),
-        (True, False, False, False),
-        (False, True, False, False),
-        (True, True, False, False),
-        (False, True, True, False),
-        (True, True, True, False),
-        (False, False, False, True),
+        (False, False, False, False, False),
+        (True, False, False, False, False),
+        (False, True, False, False, False),
+        (True, True, False, False, False),
+        (False, True, True, False, False),
+        (True, True, True, False, False),
+        (False, False, False, True, False),
+        (False, False, False, False, True),
     ],
 )
 def test_cli_composes_guarded_owned_ports_without_running_a_turn(
-    tmp_path, monkeypatch, enable_notes, enable_signs, enable_responses, enable_reflex
+    tmp_path, monkeypatch, enable_notes, enable_signs, enable_responses, enable_reflex, enable_events
 ):
     if enable_signs:
         pytest.importorskip("PIL")
@@ -367,6 +420,7 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
         assert (_options["sign_ingress"] is not None) == enable_signs
         assert (_options["screen_sign"] is not None) == enable_signs
         assert (_options["sign_responder"] is not None) == enable_responses
+        assert callable(_options["read_reflex_hint"]) == enable_events
         if enable_signs:
             assert _options["sign_ingress"].camera.media is session.ingress.capture.media
         if enable_responses:
@@ -393,6 +447,23 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
     monkeypatch.setattr("reachy_conscience.voice_host.operator_turns", inspect_session)
     monkeypatch.setattr("reachy_conscience.voice_host.OwnerConsole", TrackingConsole)
     monkeypatch.setattr("reachy_conscience.voice_host.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    if enable_events:
+
+        class FakeMonitor:
+            def __init__(self, url, token):
+                assert (url, token) == ("ws://127.0.0.1:8048/v1/events", "s" * 40)
+
+            def start(self):
+                seen.append("event_monitor_started")
+
+            def latest(self):
+                return None
+
+            def close(self):
+                seen.append("event_monitor_closed")
+
+        monkeypatch.setenv("REFLEX_EVENT_SUBSCRIBER_TOKEN", "s" * 40)
+        monkeypatch.setattr("reachy_conscience.voice_host.ReflexEventMonitor", FakeMonitor)
     if enable_reflex:
         monkeypatch.setenv("REFLEX_SPEAKING_WRITER_TOKEN", "w" * 40)
     if enable_signs:
@@ -415,6 +486,7 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
                 *(["--enable-camera-signs"] if enable_signs else []),
                 *(["--enable-camera-sign-responses"] if enable_responses else []),
                 *(["--reflex-speaking-relay-url", "http://127.0.0.1:8048"] if enable_reflex else []),
+                *(["--reflex-event-url", "ws://127.0.0.1:8048/v1/events"] if enable_events else []),
             ]
         )
         == 0
@@ -430,7 +502,9 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
                 "use_sim": False,
             },
         ),
+        *(["event_monitor_started"] if enable_events else []),
         "owned_session_composed",
+        *(["event_monitor_closed"] if enable_events else []),
         "robot_closed",
         "guard_client_closed",
     ]
