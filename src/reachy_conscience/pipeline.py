@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .guard import Action, GuardAssessment, Verdict, is_hard_stop
+from .guard import Action, GuardAssessment, InboundRoute, Verdict, is_hard_stop
 from .ledger import Ledger
 
 
@@ -112,6 +112,7 @@ class GuardedConversation:
         ledger: Ledger | None = None,
         guard_timeout_s: float = 2.0,
         approval_timeout_s: float = 30.0,
+        require_inbound_route: bool = False,
     ) -> None:
         if guard_timeout_s <= 0:
             raise ValueError("guard timeout must be positive")
@@ -137,10 +138,11 @@ class GuardedConversation:
         self.ledger = ledger
         self.guard_timeout_s = guard_timeout_s
         self.approval_timeout_s = approval_timeout_s
+        self.require_inbound_route = require_inbound_route
         self._turn_lock = asyncio.Lock()
         self._generation = 0
 
-    async def _judge(self, action: Action) -> Verdict:
+    async def _judge(self, action: Action) -> GuardAssessment:
         start = time.monotonic()
         probabilities: dict[str, float] = {}
         bank: str | None = None
@@ -148,19 +150,28 @@ class GuardedConversation:
         try:
             result = await asyncio.wait_for(self.guard(action), self.guard_timeout_s)
             if isinstance(result, GuardAssessment):
-                verdict = result.verdict
-                probabilities = dict(result.probabilities)
-                bank = result.bank
-                model = result.model
+                assessment = result
+                verdict = assessment.verdict
+                probabilities = dict(assessment.probabilities)
+                bank = assessment.bank
+                model = assessment.model
             else:
                 verdict = result
+                assessment = GuardAssessment(verdict)
             if verdict.kind not in ("approve", "hold", "block"):
                 verdict = Verdict("hold", "invalid_verdict")
+                assessment = GuardAssessment(verdict)
         except Exception:
             verdict = Verdict("hold", "judgment_unavailable")
+            assessment = GuardAssessment(verdict)
             probabilities = {}
             bank = None
             model = None
+        route = (
+            assessment.route
+            if action.kind == "inbound" and isinstance(assessment.route, InboundRoute)
+            else None
+        )
         if self.ledger is not None:
             self.ledger.append(
                 action,
@@ -169,31 +180,53 @@ class GuardedConversation:
                 (time.monotonic() - start) * 1000,
                 bank=bank,
                 model=model,
+                route=route,
             )
-        return verdict
+        return GuardAssessment(verdict, probabilities, bank, model, route)
+
+    async def _stop_now(self) -> TurnResult:
+        """Terminal owned stop, independent of the planner or output guard."""
+        self._generation += 1
+        cancel_pending = getattr(self.owner_approval, "cancel_all", None)
+        if callable(cancel_pending):
+            try:
+                cancel_pending()
+            except Exception:
+                pass  # A failed approval cancel must not suppress the output stop.
+        await self.emergency_stop.stop()
+        return TurnResult("stopped")
 
     async def run_turn(self, transcript: str) -> TurnResult:
         if not isinstance(transcript, str) or not transcript.strip() or len(transcript) > 2000:
             return TurnResult("rejected", reason="invalid_transcript")
         if is_hard_stop(transcript):
             # This path must not wait for a model, planner, TTS, or turn lock.
-            self._generation += 1
-            cancel_pending = getattr(self.owner_approval, "cancel_all", None)
-            if callable(cancel_pending):
-                try:
-                    cancel_pending()
-                except Exception:
-                    pass  # A failed approval cancel must not suppress the output stop.
-            await self.emergency_stop.stop()
-            return TurnResult("stopped")
+            return await self._stop_now()
         async with self._turn_lock:
             generation = self._generation
             inbound = Action(kind="inbound", summary="inbound utterance", untrusted_text=transcript)
-            verdict = await self._judge(inbound)
+            inbound_assessment = await self._judge(inbound)
+            verdict = inbound_assessment.verdict
             if generation != self._generation:
                 return TurnResult("interrupted")
             if verdict.kind != "approve":
                 return TurnResult(verdict.kind, reason=verdict.reason)
+            if self.require_inbound_route:
+                route = inbound_assessment.route
+                if not isinstance(route, InboundRoute) or route.confidence < 0.7:
+                    return TurnResult("held", reason="route_unavailable")
+                if route.choice == "ignore":
+                    if route.fast_command != "none":
+                        return TurnResult("held", reason="conflicting_route")
+                    return TurnResult("ignored", reason="not_directed_at_robot")
+                if route.choice == "fast_path":
+                    if route.fast_command == "stop" and route.command_confidence >= 0.7:
+                        return await self._stop_now()
+                    return TurnResult("held", reason="fast_command_not_enabled")
+                if route.choice != "llm":
+                    return TurnResult("held", reason="route_unavailable")
+                if route.fast_command != "none":
+                    return TurnResult("held", reason="conflicting_route")
             try:
                 proposals = await self.planner.plan(transcript)
             except Exception:
@@ -248,7 +281,7 @@ class GuardedConversation:
                 return TurnResult("held", reason="unknown_proposal")
         except (TypeError, ValueError, OverflowError, RecursionError):
             return TurnResult("held", reason="invalid_proposal")
-        verdict = await self._judge(action)
+        verdict = (await self._judge(action)).verdict
         if generation != self._generation:
             return TurnResult("interrupted")
         needs_owner_confirmation = (

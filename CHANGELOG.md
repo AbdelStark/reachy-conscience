@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Batch inbound Choice routing with the guard judgment; make the operator-paced host fail closed on missing or uncertain routes, handle only ignore and stop in code, and hold unsupported look/quiet/sleep commands. Record validated route proposals in `conscience.verdict@2` without transcript text; fixture tests only.
 - Add a packaged 20-case self-authored spoken/sign-style red-team corpus, dispatch-free guard runner, verdict counts and observed p95, and an explicitly confirmed owner-console run; no live model results or safety claims.
 - Wire the fixed-destination local-note tool into `conscience-voice` behind `--enable-local-notes`, with host-required guard confirmation and the same one-shot broker in the owner console; default remains tool-free and motion stays disabled.
 - Hold uncertain audience, privacy, hostile-tone, request-match, and motion-safety judgments before any owned sink; block high-confidence hostile tone and snapshot policy across each Jev request and verdict.

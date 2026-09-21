@@ -95,7 +95,10 @@ async function loadLedger() {
   body.replaceChildren();
   for (const row of rows) {
     const tr = document.createElement("tr");
-    for (const value of [new Date(row.t * 1000).toLocaleString(), row.kind, row.verdict, row.reason, `${row.latency_ms.toFixed(1)} ms`]) {
+    const route = row.route_choice
+      ? `${row.route_choice} (${Math.round(row.route_confidence * 100)}%)${row.route_choice === "fast_path" ? ` · ${row.fast_command}` : ""}`
+      : "—";
+    for (const value of [new Date(row.t * 1000).toLocaleString(), row.kind, row.verdict, route, row.reason, `${row.latency_ms.toFixed(1)} ms`]) {
       const td = document.createElement("td");
       td.textContent = value;
       tr.append(td);
@@ -105,7 +108,7 @@ async function loadLedger() {
   if (rows.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 5;
+    td.colSpan = 6;
     td.textContent = "No verdicts yet.";
     tr.append(td);
     body.append(tr);

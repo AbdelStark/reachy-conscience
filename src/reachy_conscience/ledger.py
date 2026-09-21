@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .guard import Action, Verdict
+from .guard import Action, InboundRoute, Verdict
 
 
 class Ledger:
@@ -27,7 +27,8 @@ class Ledger:
                 "id INTEGER PRIMARY KEY, t REAL NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL, "
                 "verdict TEXT NOT NULL, reason TEXT NOT NULL, "
                 "probabilities TEXT NOT NULL, latency_ms REAL NOT NULL, "
-                "bank TEXT, model TEXT, outcome TEXT, redteam INTEGER NOT NULL DEFAULT 0)"
+                "bank TEXT, model TEXT, outcome TEXT, redteam INTEGER NOT NULL DEFAULT 0, "
+                "route_choice TEXT, route_confidence REAL, fast_command TEXT, command_confidence REAL)"
             )
             # Existing preview databases had eight columns. Add only missing
             # metadata; never rewrite or discard prior verdict rows.
@@ -37,6 +38,10 @@ class Ledger:
                 ("model", "TEXT"),
                 ("outcome", "TEXT"),
                 ("redteam", "INTEGER NOT NULL DEFAULT 0"),
+                ("route_choice", "TEXT"),
+                ("route_confidence", "REAL"),
+                ("fast_command", "TEXT"),
+                ("command_confidence", "REAL"),
             ):
                 if name not in columns:
                     self.connection.execute(f"ALTER TABLE verdicts ADD COLUMN {name} {definition}")
@@ -52,6 +57,7 @@ class Ledger:
         model: str | None = None,
         outcome: str | None = None,
         redteam: bool = False,
+        route: InboundRoute | None = None,
     ) -> int:
         if (
             not isinstance(latency_ms, (int, float))
@@ -69,6 +75,8 @@ class Ledger:
             raise ValueError("invalid outcome")
         if not isinstance(redteam, bool):
             raise TypeError("redteam must be a boolean")
+        if route is not None and (not isinstance(route, InboundRoute) or action.kind != "inbound"):
+            raise ValueError("route metadata requires an inbound action")
         safe = {
             key: float(value)
             for key, value in probabilities.items()
@@ -85,7 +93,8 @@ class Ledger:
         reason = verdict.reason if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", verdict.reason) else "custom_reason"
         cursor = self.connection.execute(
             "INSERT INTO verdicts(t, kind, summary, verdict, reason, probabilities, latency_ms, "
-            "bank, model, outcome, redteam) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "bank, model, outcome, redteam, route_choice, route_confidence, fast_command, "
+            "command_confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 time.time(),
                 action.kind,
@@ -98,6 +107,10 @@ class Ledger:
                 model,
                 outcome,
                 int(redteam),
+                route.choice if route else None,
+                route.confidence if route else None,
+                route.fast_command if route else None,
+                route.command_confidence if route else None,
             ),
         )
         self.connection.commit()
@@ -108,7 +121,8 @@ class Ledger:
             raise ValueError("limit must be in [1,1000]")
         rows = self.connection.execute(
             "SELECT id, t, kind, summary, verdict, reason, probabilities, latency_ms, "
-            "bank, model, outcome, redteam "
+            "bank, model, outcome, redteam, route_choice, route_confidence, fast_command, "
+            "command_confidence "
             "FROM verdicts ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -128,6 +142,10 @@ class Ledger:
                         "model",
                         "outcome",
                         "redteam",
+                        "route_choice",
+                        "route_confidence",
+                        "fast_command",
+                        "command_confidence",
                     ),
                     row,
                     strict=True,
@@ -148,12 +166,13 @@ class Ledger:
             raise TypeError("include_summary must be a boolean")
         rows = self.connection.execute(
             "SELECT id, t, kind, summary, verdict, reason, probabilities, latency_ms, "
-            "bank, model, outcome, redteam FROM verdicts ORDER BY id ASC"
+            "bank, model, outcome, redteam, route_choice, route_confidence, fast_command, "
+            "command_confidence FROM verdicts ORDER BY id ASC"
         )
         lines = []
         for row in rows:
             record = {
-                "schema": "conscience.verdict@1",
+                "schema": "conscience.verdict@2",
                 "id": row[0],
                 "t": row[1],
                 "kind": row[2],
@@ -165,6 +184,14 @@ class Ledger:
                 "model": row[9],
                 "outcome": row[10],
                 "redteam": bool(row[11]),
+                "route": None
+                if row[12] is None
+                else {
+                    "choice": row[12],
+                    "confidence": row[13],
+                    "fast_command": row[14],
+                    "command_confidence": row[15],
+                },
             }
             if include_summary:
                 record["summary"] = row[3]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -67,6 +68,35 @@ class GuardAssessment:
     probabilities: Mapping[str, float] = field(default_factory=dict)
     bank: str | None = None
     model: str | None = None
+    route: InboundRoute | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InboundRoute:
+    """Validated model routing evidence; never an output authorization by itself."""
+
+    choice: Literal["fast_path", "llm", "ignore"]
+    confidence: float
+    fast_command: Literal["stop", "look_at_speaker", "quiet", "sleep", "none"]
+    command_confidence: float
+
+    def __post_init__(self) -> None:
+        if self.choice not in ("fast_path", "llm", "ignore") or self.fast_command not in (
+            "stop",
+            "look_at_speaker",
+            "quiet",
+            "sleep",
+            "none",
+        ):
+            raise ValueError("invalid inbound route choice")
+        for confidence in (self.confidence, self.command_confidence):
+            if (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not math.isfinite(confidence)
+                or not 0 <= confidence <= 1
+            ):
+                raise ValueError("invalid inbound route confidence")
 
 
 def lint_rules(rules: tuple[str, ...]) -> list[str]:

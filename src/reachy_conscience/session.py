@@ -91,7 +91,10 @@ class OwnedVoiceSession:
                     self._arming = False
                 if self._stopped:
                     return TurnResult("interrupted")
-            return await self.conversation.run_turn(transcript)
+            result = await self.conversation.run_turn(transcript)
+            if result.status == "stopped":
+                self._stopped = True
+            return result
 
     async def stop(self) -> TurnResult:
         """Interrupt capture and the guarded turn without waiting for either."""

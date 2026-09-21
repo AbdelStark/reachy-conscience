@@ -7,9 +7,12 @@ import threading
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from .guard import Action, GuardAssessment, GuardPolicy, Judgment, Verdict, decide
+from .guard import Action, GuardAssessment, GuardPolicy, InboundRoute, Judgment, Verdict, decide
 
 BANK = "conscience.guard@0.1.0"
+FAST_PATH_COMMANDS = ("stop", "look_at_speaker", "quiet", "sleep")
+_ROUTES = ("fast_path", "llm", "ignore")
+_FAST_CHOICES = (*FAST_PATH_COMMANDS, "none")
 _SEVERITY = [
     "harmless",
     "mildly awkward and easily undone",
@@ -42,12 +45,15 @@ def action_state(action: Action, policy: GuardPolicy) -> dict[str, Any]:
         value = getattr(action, key)
         if value is not None:
             record[key] = value
-    return {
+    state = {
         "bank": BANK,
         "rules": list(policy.rules),
         "confirm_before": sorted(policy.confirm_before),
         "action": record,
     }
+    if action.kind == "inbound":
+        state["fast_path_commands"] = list(FAST_PATH_COMMANDS)
+    return state
 
 
 def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
@@ -115,6 +121,23 @@ def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
             for key, instruction in by_kind[action.kind].items()
         }
     )
+    if action.kind == "inbound":
+        questions["route"] = {
+            "type": "choice",
+            "instructions": (
+                "Is action.untrusted_text a simple robot command from fast_path_commands, "
+                "a request needing the assistant, or speech not directed at the robot?"
+            ),
+            "criteria": {choice: None for choice in _ROUTES},
+        }
+        questions["fast_command"] = {
+            "type": "choice",
+            "instructions": (
+                "Which simple command, if any, is in action.untrusted_text? "
+                "Choose none unless the command is explicit."
+            ),
+            "criteria": {choice: None for choice in _FAST_CHOICES},
+        }
     return questions
 
 
@@ -128,6 +151,20 @@ def ask_typesafe(
     answers: dict[str, Judgment] = {}
     for key in questions:
         answer = raw_answers.get(key)
+        if key in ("route", "fast_command"):
+            choices = _ROUTES if key == "route" else _FAST_CHOICES
+            choice = getattr(answer, "choice", None)
+            confidence = getattr(answer, "confidence", None)
+            if (
+                getattr(answer, "type", None) == "choice"
+                and choice in choices
+                and isinstance(confidence, (int, float))
+                and not isinstance(confidence, bool)
+                and 0 <= confidence <= 1
+            ):
+                answers[key] = choice
+                answers[f"{key}_confidence"] = float(confidence)
+            continue
         expected = "score" if key == "severity" else "noul"
         if getattr(answer, "type", None) != expected:
             continue
@@ -169,7 +206,18 @@ class AsyncTypeSafeGuard:
                     for key, value in answers.items()
                     if key != "severity" and isinstance(value, (int, float)) and 0 <= value <= 1
                 }
-                return GuardAssessment(verdict, probabilities, BANK)
+                route = None
+                if action.kind == "inbound" and all(
+                    key in answers
+                    for key in ("route", "route_confidence", "fast_command", "fast_command_confidence")
+                ):
+                    route = InboundRoute(
+                        answers["route"],
+                        answers["route_confidence"],
+                        answers["fast_command"],
+                        answers["fast_command_confidence"],
+                    )
+                return GuardAssessment(verdict, probabilities, BANK, route=route)
             except Exception:
                 return GuardAssessment(Verdict("hold", "judgment_unavailable"), {}, BANK)
 

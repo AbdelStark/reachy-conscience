@@ -13,6 +13,7 @@ import pytest
 from reachy_conscience import (
     Action,
     GuardAssessment,
+    InboundRoute,
     Ledger,
     OwnerApprovalBroker,
     OwnerConsole,
@@ -200,6 +201,29 @@ def test_ledger_is_private_and_export_omits_even_stored_summaries(tmp_path):
         assert "summary" not in json.loads(exported)
         assert b"sensitive synthetic summary" not in exported
         assert call(console, "GET", "/api/export", token=None)[0] == 401
+
+
+def test_console_shows_route_evidence_without_inbound_text(tmp_path):
+    ledger_path = tmp_path / "ledger.db"
+    ledger = Ledger(ledger_path)
+    ledger.append(
+        Action(kind="inbound", summary="private statement", untrusted_text="private statement"),
+        Verdict("approve", "within_policy"),
+        {},
+        4.0,
+        route=InboundRoute("ignore", 0.91, "none", 0.88),
+    )
+    ledger.close()
+    with OwnerConsole(PolicyStore(tmp_path / "policy.json"), ledger_path, token=TOKEN) as console:
+        status, _, raw = call(console, "GET", "/api/ledger")
+        assert status == 200
+        row = json.loads(raw)["rows"][0]
+        assert (row["route_choice"], row["route_confidence"]) == ("ignore", 0.91)
+        assert b"private statement" not in raw
+        status, _, exported = call(console, "GET", "/api/export")
+        assert status == 200
+        assert json.loads(exported)["route"]["choice"] == "ignore"
+        assert b"private statement" not in exported
 
 
 def test_cli_help_and_private_state_directory_gate(tmp_path, capsys):

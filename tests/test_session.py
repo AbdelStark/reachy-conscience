@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 from reachy_conscience import (
+    GuardAssessment,
     GuardedConversation,
+    InboundRoute,
     OwnedAudioIngress,
     OwnedVoiceSession,
     ReachyMediaAudio,
@@ -161,6 +163,31 @@ async def test_spoken_final_stop_bypasses_playback_guard_and_planner():
     assert (await voice.run_once()).status == "stopped"
     assert ports.events == ["capture_start", "asr_final", "capture_stop", "stop"]
     assert (await voice.run_once()).status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_model_routed_stop_is_terminal_for_owned_voice_session():
+    ports = Ports("please stop the robot")
+
+    async def guard(action):
+        ports.events.append(f"guard_{action.kind}")
+        return GuardAssessment(
+            Verdict("approve", "fixture"), route=InboundRoute("fast_path", 0.9, "stop", 0.9)
+        )
+
+    conversation = GuardedConversation(
+        planner=ports,
+        guard=guard,
+        synthesizer=ports,
+        audio=ports,
+        emergency_stop=ports,
+        require_inbound_route=True,
+    )
+    voice = OwnedVoiceSession(ports, conversation, ports)
+    assert (await voice.run_once()).status == "stopped"
+    assert ports.events == ["capture_start", "asr_final", "capture_stop", "arm", "guard_inbound", "stop"]
+    assert (await voice.run_once()).status == "stopped"
+    assert ports.events.count("capture_start") == 1
 
 
 @pytest.mark.asyncio

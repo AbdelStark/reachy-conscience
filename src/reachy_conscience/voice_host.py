@@ -153,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
                     tools=notes_tool,
                     effectful_tools=effectful_tools,
                     owner_approval=approval_broker,
+                    require_inbound_route=True,
                 )
                 session = OwnedVoiceSession(
                     OwnedAudioIngress(audio, transcriber, channels=robot.media.get_input_channels()),
