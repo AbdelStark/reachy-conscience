@@ -1,5 +1,6 @@
 """Deterministic action gate for Reachy Mini integrations."""
 
+from .camera_sign import CameraSignIngress, LocalTesseractOcr, ReachyCameraFrame
 from .guard import (
     Action,
     GuardAssessment,
@@ -38,6 +39,9 @@ from .session import OwnedPlaybackGate, OwnedVoiceSession
 
 __all__ = [
     "Action",
+    "CameraSignIngress",
+    "LocalTesseractOcr",
+    "ReachyCameraFrame",
     "GuardPolicy",
     "GuardAssessment",
     "InboundRoute",

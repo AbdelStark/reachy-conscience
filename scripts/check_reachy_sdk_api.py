@@ -9,6 +9,7 @@ from reachy_mini.utils import create_head_pose
 from reachy_mini.utils.interpolation import InterpolationTechnique
 
 REQUIRED = (
+    "get_frame_jpeg",
     "get_output_audio_samplerate",
     "get_output_channels",
     "start_playing",

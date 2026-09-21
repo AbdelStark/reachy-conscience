@@ -72,6 +72,41 @@ def test_operator_keeps_host_required_note_confirmation_after_policy_edit(tmp_pa
     assert store.load().confirm_before == frozenset()
 
 
+def test_operator_scans_sign_without_opening_microphone_or_dispatching_output(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    session = FakeSession(guard)
+    reports = []
+    seen = []
+
+    class Sign:
+        async def read_once(self):
+            seen.append("camera")
+            return "stop"
+
+    async def screen_sign(text):
+        seen.append(("guard", text, guard.policy.rules))
+        return TurnResult("block", reason="fixture")
+
+    commands = iter(["s", "q"])
+    operator_turns(
+        session,
+        store,
+        guard,
+        prompt=lambda _message: next(commands),
+        report=reports.append,
+        sign_ingress=Sign(),
+        screen_sign=screen_sign,
+    )
+    assert seen == [
+        "camera",
+        ("guard", "stop", ("Never reveal a password", "Do not startle a nearby person")),
+    ]
+    assert session.seen_rules == []
+    assert session.stops == 1
+    assert reports == ["Sign: block; no output dispatched."]
+
+
 @pytest.mark.parametrize("exit_mode", ["eof", "stop", "exception"])
 def test_operator_always_stops_owned_output(tmp_path, exit_mode):
     store = PolicyStore(tmp_path / "policy.json")
@@ -118,15 +153,22 @@ def test_cli_help_and_hardware_gate_do_not_import_robot_or_start_capture(tmp_pat
     assert not (tmp_path / "state").exists()
 
 
-@pytest.mark.parametrize("enable_notes", [False, True])
-def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monkeypatch, enable_notes):
+@pytest.mark.parametrize(
+    ("enable_notes", "enable_signs"),
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_cli_composes_guarded_owned_ports_without_running_a_turn(
+    tmp_path, monkeypatch, enable_notes, enable_signs
+):
+    if enable_signs:
+        pytest.importorskip("PIL")
     seen = []
     console_brokers = []
 
     class FakeRobot:
         def __init__(self, **options):
             seen.append(("robot_options", options))
-            self.media = SimpleNamespace(get_input_channels=lambda: 1)
+            self.media = SimpleNamespace(get_input_channels=lambda: 1, get_frame_jpeg=lambda: None)
             self.client = SimpleNamespace()
 
         def __enter__(self):
@@ -166,6 +208,10 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monke
             assert not guard.policy.confirm_before
             assert "No tools or motion are available" in conversation.planner.system
         assert conversation.enable_motion is False
+        assert (_options["sign_ingress"] is not None) == enable_signs
+        assert (_options["screen_sign"] is not None) == enable_signs
+        if enable_signs:
+            assert _options["sign_ingress"].camera.media is session.ingress.capture.media
         seen.append("owned_session_composed")
 
     class TrackingConsole(OwnerConsole):
@@ -187,6 +233,8 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monke
     monkeypatch.setattr("reachy_conscience.voice_host.operator_turns", inspect_session)
     monkeypatch.setattr("reachy_conscience.voice_host.OwnerConsole", TrackingConsole)
     monkeypatch.setattr("reachy_conscience.voice_host.sys.stdin", SimpleNamespace(isatty=lambda: True))
+    if enable_signs:
+        monkeypatch.setattr("reachy_conscience.voice_host.shutil.which", lambda _binary: "/usr/bin/tesseract")
     assert (
         main(
             [
@@ -202,6 +250,7 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monke
                 "localhost_only",
                 "--acknowledge-experimental-hardware",
                 *(["--enable-local-notes"] if enable_notes else []),
+                *(["--enable-camera-signs"] if enable_signs else []),
             ]
         )
         == 0

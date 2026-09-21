@@ -22,6 +22,7 @@ conscience-voice = "reachy_conscience.voice_host:main"
 jev = ["typesafe-sdk>=0.7.0"]
 robot = ["reachy-mini==1.10.0", "numpy>=2,<3"]
 asr = ["faster-whisper==1.2.1", "numpy>=2,<3"]
+ocr = ["pillow==12.3.0"]
 
 [project.urls]
 Repository = "https://github.com/AbdelStark/reachy-conscience"

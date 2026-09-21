@@ -47,6 +47,7 @@ def action_state(action: Action, policy: GuardPolicy) -> dict[str, Any]:
         "motion_class",
         "motion_target_json",
         "untrusted_text",
+        "source",
         "text",
         "user_request",
         "audience",

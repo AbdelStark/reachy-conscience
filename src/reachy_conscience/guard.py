@@ -25,6 +25,7 @@ class Action:
     motion_class: str | None = None
     motion_target_json: str | None = None
     untrusted_text: str | None = None
+    source: str | None = None
     text: str | None = None
     user_request: str | None = None
     audience: Mapping[str, bool] | None = None
@@ -41,6 +42,8 @@ class Action:
             raise ValueError("tool_call requires tool")
         if self.kind == "motion" and not self.motion_class:
             raise ValueError("motion requires motion_class")
+        if self.source is not None and (self.kind != "inbound" or self.source != "camera_sign"):
+            raise ValueError("invalid inbound source")
 
 
 @dataclass(frozen=True, slots=True)

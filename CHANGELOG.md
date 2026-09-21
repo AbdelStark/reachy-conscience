@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add opt-in one-frame Reachy camera-sign screening with local Tesseract OCR, bounded JPEG/text/time limits, a source-labeled inbound guard record, and no planner/output path. Signs cannot trigger the speech hard-stop; synthetic JPEG and fake SDK tests do not validate on-robot camera or OCR quality.
 - Enforce four-proposal batch and bounded planner/TTS waits at the owned pipeline boundary, independently of the concrete adapters; reject malformed batches before partial output and hold stalled operations without enqueueing audio.
 - Recognize short direct, polite or wake-word-prefixed stop commands locally before Jev, while excluding negated, quoted, or embedded uses; fake-session tests cover the guarded-output bypass without claiming spoken-stop availability during playback.
 - Require an opt-in motion-context provider with bounded collection and post-guard freshness checks; deterministically hold missing, stale, critical-battery, hot-motor, and larger-motion-near-person states before model or SDK dispatch. The voice host still has no live sensor provider and keeps motion disabled.

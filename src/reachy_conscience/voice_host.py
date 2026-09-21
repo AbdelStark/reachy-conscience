@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
+from .camera_sign import CameraSignIngress, LocalTesseractOcr, ReachyCameraFrame
 from .guard import GuardPolicy
 from .ingress import OwnedAudioIngress
 from .jev import AsyncTypeSafeGuard
@@ -38,6 +40,10 @@ class TurnSession(Protocol):
     async def stop(self) -> TurnResult: ...
 
 
+class SignIngress(Protocol):
+    async def read_once(self) -> str | None: ...
+
+
 def operator_turns(
     session: TurnSession,
     policy_store: PolicyStore,
@@ -47,6 +53,8 @@ def operator_turns(
     report: Callable[[str], None] = print,
     listen_timeout_s: float = 30.0,
     required_confirmation: frozenset[str] = frozenset(),
+    sign_ingress: SignIngress | None = None,
+    screen_sign: Callable[[str], Awaitable[TurnResult]] | None = None,
 ) -> None:
     """Reload policy only between turns; stop owned output on every exit.
 
@@ -56,14 +64,32 @@ def operator_turns(
     """
     if not 1 <= listen_timeout_s <= 120:
         raise ValueError("listen timeout must be within 1..120 seconds")
+    if (sign_ingress is None) != (screen_sign is None):
+        raise ValueError("sign ingress and guard must be enabled together")
     try:
         while True:
             try:
-                command = prompt("Wait until the speaker is quiet. Enter: listen once; q: stop > ")
+                options = (
+                    "Enter: listen once; s: scan sign once; q: stop"
+                    if sign_ingress
+                    else "Enter: listen once; q: stop"
+                )
+                command = prompt(f"Wait until the speaker is quiet. {options} > ")
             except EOFError:
                 break
             if command.strip().lower() in {"q", "quit"}:
                 break
+            if command.strip().lower() == "s" and sign_ingress is not None:
+                assert screen_sign is not None
+                guard.policy = _effective_policy(policy_store.load(), required_confirmation)
+                try:
+                    sign_text = asyncio.run(sign_ingress.read_once())
+                    result = asyncio.run(screen_sign(sign_text)) if sign_text else None
+                except Exception:
+                    report("Sign: unavailable; no output or action was dispatched.")
+                    continue
+                report(f"Sign: {result.status if result else 'no_text'}; no output dispatched.")
+                continue
             if command.strip():
                 report("Unknown command; no microphone was opened.")
                 continue
@@ -105,6 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Opt in to exact-owner-approved local notes; no external messages",
     )
     parser.add_argument(
+        "--enable-camera-signs",
+        action="store_true",
+        help="Opt in to one-frame local OCR and guard-only sign screening; no sign commands or output",
+    )
+    parser.add_argument(
         "--acknowledge-experimental-hardware",
         action="store_true",
         help="Required: no robot stop, playback, or voice quality validation exists",
@@ -125,6 +156,13 @@ def main(argv: list[str] | None = None) -> int:
         policy = _effective_policy(store.load(), effectful_tools)
         approval_broker = OwnerApprovalBroker() if args.enable_local_notes else None
         notes_tool = LocalNotesTool(state_dir) if args.enable_local_notes else None
+        if args.enable_camera_signs:
+            try:
+                import PIL  # noqa: F401
+            except ImportError as exc:
+                raise ValueError("install the ocr extra before enabling camera signs") from exc
+            if shutil.which("tesseract") is None:
+                raise ValueError("install a local Tesseract binary before enabling camera signs")
         transcriber = FasterWhisperTranscriber.from_local_model(args.model_path)
         try:
             from reachy_mini import ReachyMini
@@ -161,6 +199,11 @@ def main(argv: list[str] | None = None) -> int:
                     conversation,
                     playback,
                 )
+                sign_ingress = (
+                    CameraSignIngress(ReachyCameraFrame(robot.media), LocalTesseractOcr())
+                    if args.enable_camera_signs
+                    else None
+                )
                 with OwnerConsole(
                     store,
                     state_dir / "ledger.db",
@@ -186,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
                         guard,
                         listen_timeout_s=args.listen_timeout,
                         required_confirmation=effectful_tools,
+                        sign_ingress=sign_ingress,
+                        screen_sign=conversation.screen_sign if sign_ingress is not None else None,
                     )
         finally:
             ledger.close()

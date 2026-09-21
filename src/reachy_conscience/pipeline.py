@@ -325,6 +325,22 @@ class GuardedConversation:
                 delivered += 1
             return TurnResult("complete", delivered)
 
+    async def screen_sign(self, text: str) -> TurnResult:
+        """Judge one OCR result as untrusted camera text, without planning or output.
+
+        A sign is never a local hard-stop command. A valid approval only means
+        the inbound guard did not reject the text; it does not execute it.
+        """
+        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+            return TurnResult("rejected", reason="invalid_sign_text")
+        async with self._turn_lock:
+            generation = self._generation
+            action = Action(kind="inbound", summary="camera sign", untrusted_text=text, source="camera_sign")
+            assessment = await self._judge(action)
+            if generation != self._generation:
+                return TurnResult("interrupted")
+            return TurnResult(assessment.verdict.kind, reason=assessment.verdict.reason)
+
     async def _emit(self, proposal: Proposal, generation: int, transcript: str) -> TurnResult:
         if generation != self._generation:
             return TurnResult("interrupted")
