@@ -192,7 +192,7 @@ def test_operator_inspects_only_fresh_reflex_hints_without_opening_capture(tmp_p
     guard = SimpleNamespace(policy=store.load())
     session = FakeSession(guard)
     reports = []
-    hints = iter([ReflexHint("user_addressed", 4, "p1", 0.83, 1), None])
+    hints = iter([ReflexHint("user_addressed", 4, "p1", 0.83, 1, 2), None])
     commands = iter(["e", "e", "q"])
     operator_turns(
         session,

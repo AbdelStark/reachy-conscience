@@ -34,6 +34,35 @@ def test_hint_inbox_accepts_only_fresh_monotonic_text_free_events():
     assert inbox.latest().kind == "interrupt"
 
 
+def test_hint_expires_from_relay_timestamp_not_a_second_full_local_ttl():
+    clock = [2_000.0, 10.0]
+    inbox = ReflexEventInbox(wall_ms=lambda: clock[0], monotonic_s=lambda: clock[1])
+    assert inbox.accept(frame(1, 1_000, {"type": "yield", "p": 0.8}))
+    assert inbox.latest() is not None  # One second has already elapsed before receipt.
+    clock[1] = 10.49
+    assert inbox.latest() is not None
+    clock[1] = 10.50
+    assert inbox.latest() is None  # Total timestamp age has reached 1.5 seconds.
+    clock[1] = 20.0
+    assert inbox.accept(frame(2, 2_200, {"type": "interrupt", "p": 0.9}))
+    clock[1] = 21.69
+    assert inbox.latest() is not None  # At most 250 ms of future skew is tolerated.
+    clock[1] = 21.70
+    assert inbox.latest() is None
+
+
+def test_clock_sampling_delay_cannot_rejuvenate_a_stale_relay_event():
+    clock = [2_000.0, 10.0]
+
+    def delayed_monotonic() -> float:
+        clock[0] += 1_000  # Simulate a scheduling stall around clock sampling.
+        clock[1] += 1
+        return clock[1]
+
+    inbox = ReflexEventInbox(wall_ms=lambda: clock[0], monotonic_s=delayed_monotonic)
+    assert not inbox.accept(frame(1, 1_000, {"type": "yield", "p": 0.8}))
+
+
 @pytest.mark.parametrize(
     "bad",
     [

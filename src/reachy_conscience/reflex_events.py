@@ -38,6 +38,7 @@ class ReflexHint:
     person: str | None
     probability: float | None
     received_at_monotonic: float
+    expires_at_monotonic: float
 
 
 class ReflexEventInbox:
@@ -86,9 +87,6 @@ class ReflexEventInbox:
                 or not isinstance(event, dict)
             ):
                 return False
-            age_ms = self._wall_ms() - stamp
-            if not -MAX_FUTURE_SKEW_MS <= age_ms <= MAX_EVENT_AGE_MS:
-                return False
             kind = event.get("type")
             person = event.get("person")
             p = event.get("p")
@@ -118,13 +116,24 @@ class ReflexEventInbox:
                 or not 0 <= probability <= 1
             ):
                 return False
+            # Read monotonic first. If this thread stalls before wall time is
+            # sampled, the delay consumes freshness instead of extending it.
             received = self._monotonic_s()
+            age_ms = self._wall_ms() - stamp
+            if not math.isfinite(received) or not -MAX_FUTURE_SKEW_MS <= age_ms <= MAX_EVENT_AGE_MS:
+                return False
+            expires = received + (MAX_EVENT_AGE_MS - age_ms) / 1000
             with self._lock:
                 if seq <= self._last_seq:
                     return False
                 self._last_seq = seq
                 self._latest = ReflexHint(
-                    kind, seq, person, float(probability) if probability is not None else None, received
+                    kind,
+                    seq,
+                    person,
+                    float(probability) if probability is not None else None,
+                    received,
+                    expires,
                 )
             return True
         except (UnicodeError, ValueError, TypeError, OverflowError):
@@ -133,10 +142,10 @@ class ReflexEventInbox:
     def latest(self) -> ReflexHint | None:
         with self._lock:
             hint = self._latest
-        if (
-            hint is None
-            or not 0 <= self._monotonic_s() - hint.received_at_monotonic <= MAX_EVENT_AGE_MS / 1000
-        ):
+        if hint is None:
+            return None
+        now = self._monotonic_s()
+        if not hint.received_at_monotonic <= now < hint.expires_at_monotonic:
             return None
         return hint
 
