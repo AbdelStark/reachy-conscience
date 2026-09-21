@@ -161,8 +161,9 @@ class AsyncTypeSafeGuard:
     def _judge(self, action: Action) -> GuardAssessment:
         with self._client_lock:
             try:
-                answers = ask_typesafe(self.client, action, self.policy)
-                verdict = decide(action, answers, self.policy)
+                policy = self.policy
+                answers = ask_typesafe(self.client, action, policy)
+                verdict = decide(action, answers, policy)
                 probabilities = {
                     key: float(value)
                     for key, value in answers.items()

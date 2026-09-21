@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from reachy_conscience import GuardedConversation, Motion, Speech, ToolCall, Verdict
+from reachy_conscience import GuardedConversation, GuardPolicy, Motion, Speech, ToolCall, Verdict, decide
 
 
 class Ports:
@@ -81,6 +81,40 @@ async def test_approved_speech_is_synthesized_only_after_guard():
         ("synthesize", "hello back"),
         ("enqueue", b"hello back"),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("proposal", "answers", "options"),
+    [
+        (
+            Speech("uncertain reply"),
+            {"appropriate_for_audience": 0.5, "discloses_private_info": 0.1, "tone_hostile": 0.1},
+            {},
+        ),
+        (
+            ToolCall("get_weather", {"city": "Paris"}, "weather lookup"),
+            {"matches_request": 0.5, "irreversible": 0.1, "needs_confirmation": 0.1},
+            {"read_only_tools": frozenset({"get_weather"})},
+        ),
+        (
+            Motion("small_gesture", {"yawDeg": 5}),
+            {"safe_given_state": 0.5, "startle_risk": 0.1},
+            {"enable_motion": True},
+        ),
+    ],
+)
+async def test_uncertain_judgment_never_reaches_an_owned_output(proposal, answers, options):
+    ports = Ports([proposal])
+
+    async def guard(action):
+        if action.kind == "inbound":
+            return Verdict("approve", "fixture")
+        return decide(action, {**answers, "severity": "minor"}, GuardPolicy())
+
+    result = await pipeline(ports, guard, **options).run_turn("please help")
+    assert result.status == "hold"
+    assert all(event[0] not in ("synthesize", "enqueue", "execute") for event in ports.events)
 
 
 @pytest.mark.asyncio

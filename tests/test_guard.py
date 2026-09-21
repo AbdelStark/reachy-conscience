@@ -77,6 +77,58 @@ def test_inbound_injection_and_tool_mismatch() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("kind", "answers", "verdict", "reason"),
+    [
+        (
+            "utterance",
+            {"appropriate_for_audience": 0.5, "discloses_private_info": 0.1, "tone_hostile": 0.1},
+            "hold",
+            "uncertain_audience",
+        ),
+        (
+            "utterance",
+            {"appropriate_for_audience": 0.9, "discloses_private_info": 0.5, "tone_hostile": 0.1},
+            "hold",
+            "uncertain_private_info",
+        ),
+        (
+            "utterance",
+            {"appropriate_for_audience": 0.9, "discloses_private_info": 0.1, "tone_hostile": 0.5},
+            "hold",
+            "uncertain_tone",
+        ),
+        (
+            "utterance",
+            {"appropriate_for_audience": 0.9, "discloses_private_info": 0.1, "tone_hostile": 0.9},
+            "block",
+            "hostile_tone",
+        ),
+        (
+            "tool_call",
+            {"matches_request": 0.5, "irreversible": 0.1, "needs_confirmation": 0.1},
+            "hold",
+            "uncertain_request_match",
+        ),
+        (
+            "motion",
+            {"safe_given_state": 0.5, "startle_risk": 0.1},
+            "hold",
+            "uncertain_motion_safety",
+        ),
+    ],
+)
+def test_uncertain_action_judgments_cannot_approve(kind, answers, verdict, reason) -> None:
+    options = {}
+    if kind == "tool_call":
+        options = {"tool": "search"}
+    elif kind == "motion":
+        options = {"motion_class": "small_gesture"}
+    action = Action(kind=kind, summary="test proposal", **options)
+    result = decide(action, {**answers, "severity": "minor"}, GuardPolicy())
+    assert (result.kind, result.reason) == (verdict, reason)
+
+
 def test_irreversible_tool_always_holds_even_when_severity_is_low() -> None:
     action = Action(kind="tool_call", tool="send_message", summary="send a reminder")
     base = {"matches_request": 0.9, "irreversible": 0.9, "needs_confirmation": 0.1}

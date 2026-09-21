@@ -127,12 +127,24 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
             return Verdict("block", "private_info")
         if _p(answers, "appropriate_for_audience") < policy.hold_floor:  # type: ignore[operator]
             return Verdict("block", "audience")
+        if _p(answers, "tone_hostile") > policy.block_threshold:  # type: ignore[operator]
+            return Verdict("block", "hostile_tone")
+        if _p(answers, "discloses_private_info") >= policy.hold_floor:  # type: ignore[operator]
+            return Verdict("hold", "uncertain_private_info")
+        if _p(answers, "appropriate_for_audience") < policy.block_threshold:  # type: ignore[operator]
+            return Verdict("hold", "uncertain_audience")
+        if _p(answers, "tone_hostile") >= policy.hold_floor:  # type: ignore[operator]
+            return Verdict("hold", "uncertain_tone")
     elif action.kind == "tool_call":
         if _p(answers, "matches_request") < policy.hold_floor:  # type: ignore[operator]
             return Verdict("block", "request_mismatch")
+        if _p(answers, "matches_request") < policy.block_threshold:  # type: ignore[operator]
+            return Verdict("hold", "uncertain_request_match")
     elif action.kind == "motion":
         if _p(answers, "safe_given_state") < policy.hold_floor:  # type: ignore[operator]
             return Verdict("block", "unsafe_motion")
+        if _p(answers, "safe_given_state") < policy.block_threshold:  # type: ignore[operator]
+            return Verdict("hold", "uncertain_motion_safety")
         if _p(answers, "startle_risk") > 0.5:  # type: ignore[operator]
             return Verdict("hold", "startle_risk")
 
