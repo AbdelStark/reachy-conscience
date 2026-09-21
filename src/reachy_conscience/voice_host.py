@@ -11,14 +11,18 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
+from .guard import GuardPolicy
 from .ingress import OwnedAudioIngress
 from .jev import AsyncTypeSafeGuard
 from .ledger import Ledger
 from .local_asr import FasterWhisperTranscriber
+from .local_notes import TOOL_NAME, LocalNotesTool
 from .local_tts import EspeakFfmpegSynthesizer
+from .owner_approval import OwnerApprovalBroker
 from .owner_console import OwnerConsole
 from .owner_console_cli import _private_directory
 from .pipeline import GuardedConversation, TurnResult
@@ -42,6 +46,7 @@ def operator_turns(
     prompt: Callable[[str], str] = input,
     report: Callable[[str], None] = print,
     listen_timeout_s: float = 30.0,
+    required_confirmation: frozenset[str] = frozenset(),
 ) -> None:
     """Reload policy only between turns; stop owned output on every exit.
 
@@ -62,13 +67,18 @@ def operator_turns(
             if command.strip():
                 report("Unknown command; no microphone was opened.")
                 continue
-            guard.policy = policy_store.load()
+            guard.policy = _effective_policy(policy_store.load(), required_confirmation)
             result = asyncio.run(session.run_once(listen_timeout_s=listen_timeout_s))
             report(f"Turn: {result.status}; guarded outputs: {result.delivered}.")
             if result.status in {"stopped", "interrupted"}:
                 break
     finally:
         asyncio.run(session.stop())
+
+
+def _effective_policy(policy: GuardPolicy, required_confirmation: frozenset[str]) -> GuardPolicy:
+    """Keep host-required confirmation even if the editable policy omits it."""
+    return replace(policy, confirm_before=policy.confirm_before | required_confirmation)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -90,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--console-port", type=int, default=0, help="Owner console loopback port")
     parser.add_argument("--listen-timeout", type=float, default=30.0, help="Seconds per capture, 1..120")
     parser.add_argument(
+        "--enable-local-notes",
+        action="store_true",
+        help="Opt in to exact-owner-approved local notes; no external messages",
+    )
+    parser.add_argument(
         "--acknowledge-experimental-hardware",
         action="store_true",
         help="Required: no robot stop, playback, or voice quality validation exists",
@@ -105,8 +120,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("localhost_only requires a local robot host")
     try:
         state_dir = _private_directory(args.state_dir)
-        store = PolicyStore(state_dir / "policy.json")  # No effectful tools are registered.
-        policy = store.load()
+        effectful_tools = frozenset({TOOL_NAME}) if args.enable_local_notes else frozenset()
+        store = PolicyStore(state_dir / "policy.json", registered_tools=effectful_tools)
+        policy = _effective_policy(store.load(), effectful_tools)
+        approval_broker = OwnerApprovalBroker() if args.enable_local_notes else None
+        notes_tool = LocalNotesTool(state_dir) if args.enable_local_notes else None
         transcriber = FasterWhisperTranscriber.from_local_model(args.model_path)
         try:
             from reachy_mini import ReachyMini
@@ -126,25 +144,47 @@ def main(argv: list[str] | None = None) -> int:
                 motion = ReachySdkMotion(robot)  # Never armed; stop still requests StopMoveCmd.
                 guard = AsyncTypeSafeGuard(client, policy)
                 conversation = GuardedConversation(
-                    planner=LocalOllamaPlanner(args.ollama_model),
+                    planner=LocalOllamaPlanner(args.ollama_model, enable_local_notes=args.enable_local_notes),
                     guard=guard,
                     synthesizer=EspeakFfmpegSynthesizer(),
                     audio=audio,
                     emergency_stop=ReachyOutputStop(audio, motion),
                     ledger=ledger,
+                    tools=notes_tool,
+                    effectful_tools=effectful_tools,
+                    owner_approval=approval_broker,
                 )
                 session = OwnedVoiceSession(
                     OwnedAudioIngress(audio, transcriber, channels=robot.media.get_input_channels()),
                     conversation,
                     audio,
                 )
-                with OwnerConsole(store, state_dir / "ledger.db", port=args.console_port) as console:
+                with OwnerConsole(
+                    store,
+                    state_dir / "ledger.db",
+                    port=args.console_port,
+                    approval_broker=approval_broker,
+                ) as console:
                     print(f"Owner console: {console.url}")
                     print(f"Owner token: {console.token}")
-                    print(
-                        "Tools and motion are disabled. Keep this terminal private; retain a physical stop."
+                    if args.enable_local_notes:
+                        print(
+                            "Local notes enabled: exact owner approval required in the console. "
+                            "Motion and external messages are disabled; "
+                            "protect notes.jsonl and retain a physical stop."
+                        )
+                    else:
+                        print(
+                            "Tools and motion are disabled. "
+                            "Keep this terminal private; retain a physical stop."
+                        )
+                    operator_turns(
+                        session,
+                        store,
+                        guard,
+                        listen_timeout_s=args.listen_timeout,
+                        required_confirmation=effectful_tools,
                     )
-                    operator_turns(session, store, guard, listen_timeout_s=args.listen_timeout)
         finally:
             ledger.close()
             client.close()

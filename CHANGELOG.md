@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Wire the fixed-destination local-note tool into `conscience-voice` behind `--enable-local-notes`, with host-required guard confirmation and the same one-shot broker in the owner console; default remains tool-free and motion stays disabled.
 - Hold uncertain audience, privacy, hostile-tone, request-match, and motion-safety judgments before any owned sink; block high-confidence hostile tone and snapshot policy across each Jev request and verdict.
 - Add an explicitly operator-paced `conscience-voice` host that composes owned capture, local ASR/planner, Jev guard, offline TTS, SDK audio, policy console, and ledger. Tools/motion remain disabled, with no automatic next listen or hardware claim.
 - Request an owned playback queue flush before a later microphone capture; a stop racing with that flush cannot reopen capture. The SDK still provides no playback-complete acknowledgement.

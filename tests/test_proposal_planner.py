@@ -98,6 +98,15 @@ def test_planner_refuses_non_loopback_and_bad_paths():
             LocalOllamaPlanner("fixture", endpoint=endpoint)
 
 
+def test_planner_describes_only_opted_in_local_note_tool():
+    default = LocalOllamaPlanner("fixture")
+    enabled = LocalOllamaPlanner("fixture", enable_local_notes=True)
+    assert "No tools or motion are available" in default.system
+    assert "append_local_note" not in default.system
+    assert "append_local_note" in enabled.system
+    assert "No other tools or motion are available" in enabled.system
+
+
 @pytest.mark.asyncio
 async def test_loopback_complete_response_and_guard_before_output(ollama_fixture):
     endpoint, reply, received = ollama_fixture

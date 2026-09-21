@@ -55,6 +55,13 @@ SYSTEM = (
     "Do not claim you have executed a tool or movement. "
     "Return an empty array when no response is appropriate."
 )
+LOCAL_NOTES_INSTRUCTION = (
+    "The only available tool is append_local_note with exactly one argument: "
+    "{text:string}. Propose it only when the user explicitly asks to save a local note. "
+    "Keep the text to at most 240 printable characters. An independent owner must approve "
+    "the exact arguments; do not claim the note was saved. No other tools or motion are available."
+)
+NO_TOOLS_INSTRUCTION = "No tools or motion are available; propose speech or an empty array only."
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -135,6 +142,7 @@ class LocalOllamaPlanner:
         *,
         endpoint: str = "http://127.0.0.1:11434/api/generate",
         timeout_s: float = 30.0,
+        enable_local_notes: bool = False,
     ) -> None:
         parsed = urllib.parse.urlsplit(endpoint)
         if (
@@ -155,13 +163,14 @@ class LocalOllamaPlanner:
         self.model = model
         self.endpoint = endpoint
         self.timeout_s = timeout_s
+        self.system = f"{SYSTEM} {LOCAL_NOTES_INSTRUCTION if enable_local_notes else NO_TOOLS_INSTRUCTION}"
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
     def _complete(self, transcript: str) -> str:
         body = json.dumps(
             {
                 "model": self.model,
-                "system": SYSTEM,
+                "system": self.system,
                 "prompt": json.dumps({"untrusted_user_text": transcript}, ensure_ascii=False),
                 "format": PROPOSAL_SCHEMA,
                 "stream": False,

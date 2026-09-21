@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from reachy_conscience import GuardPolicy, PolicyStore, TurnResult
+from reachy_conscience import GuardPolicy, LocalNotesTool, OwnerApprovalBroker, PolicyStore, TurnResult
+from reachy_conscience.owner_console import OwnerConsole
 from reachy_conscience.voice_host import main, operator_turns
 
 
@@ -52,6 +53,23 @@ def test_operator_reloads_policy_between_explicit_turns_and_redacts_status(tmp_p
         "Turn: hold; guarded outputs: 0.",
     ]
     assert "address" not in " ".join(reports)
+
+
+def test_operator_keeps_host_required_note_confirmation_after_policy_edit(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json", registered_tools={"append_local_note"})
+    guard = SimpleNamespace(policy=store.load())
+    session = FakeSession(guard)
+    commands = iter(["", "q"])
+    operator_turns(
+        session,
+        store,
+        guard,
+        prompt=lambda _message: next(commands),
+        report=lambda _message: None,
+        required_confirmation=frozenset({"append_local_note"}),
+    )
+    assert guard.policy.confirm_before == frozenset({"append_local_note"})
+    assert store.load().confirm_before == frozenset()
 
 
 @pytest.mark.parametrize("exit_mode", ["eof", "stop", "exception"])
@@ -100,8 +118,10 @@ def test_cli_help_and_hardware_gate_do_not_import_robot_or_start_capture(tmp_pat
     assert not (tmp_path / "state").exists()
 
 
-def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monkeypatch):
+@pytest.mark.parametrize("enable_notes", [False, True])
+def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monkeypatch, enable_notes):
     seen = []
+    console_brokers = []
 
     class FakeRobot:
         def __init__(self, **options):
@@ -127,10 +147,30 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monke
         assert session.ingress.capture is session.playback is conversation.audio
         assert conversation.guard is guard
         assert conversation.emergency_stop.audio is conversation.audio
-        assert conversation.tools is None and conversation.motion is None
-        assert conversation.effectful_tools == frozenset()
+        assert conversation.motion is None
+        assert conversation.effectful_tools == (
+            frozenset({"append_local_note"}) if enable_notes else frozenset()
+        )
+        assert _store.registered_tools == conversation.effectful_tools
+        if enable_notes:
+            assert isinstance(conversation.tools, LocalNotesTool)
+            assert isinstance(conversation.owner_approval, OwnerApprovalBroker)
+            assert conversation.owner_approval is console_brokers[0]
+            assert "append_local_note" in guard.policy.confirm_before
+            assert conversation.planner.system.endswith("No other tools or motion are available.")
+        else:
+            assert conversation.tools is None and conversation.owner_approval is None
+            assert console_brokers == [None]
+            assert not guard.policy.confirm_before
+            assert "No tools or motion are available" in conversation.planner.system
         assert conversation.enable_motion is False
         seen.append("owned_session_composed")
+
+    class TrackingConsole(OwnerConsole):
+        def __init__(self, store, ledger_path, **options):
+            assert (options["approval_broker"] is not None) == enable_notes
+            console_brokers.append(options["approval_broker"])
+            super().__init__(store, ledger_path, **options)
 
     monkeypatch.setitem(sys.modules, "reachy_mini", SimpleNamespace(ReachyMini=FakeRobot))
     monkeypatch.setitem(
@@ -143,6 +183,7 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monke
         lambda _path: SimpleNamespace(),
     )
     monkeypatch.setattr("reachy_conscience.voice_host.operator_turns", inspect_session)
+    monkeypatch.setattr("reachy_conscience.voice_host.OwnerConsole", TrackingConsole)
     monkeypatch.setattr("reachy_conscience.voice_host.sys.stdin", SimpleNamespace(isatty=lambda: True))
     assert (
         main(
@@ -158,6 +199,7 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monke
                 "--connection-mode",
                 "localhost_only",
                 "--acknowledge-experimental-hardware",
+                *(["--enable-local-notes"] if enable_notes else []),
             ]
         )
         == 0
