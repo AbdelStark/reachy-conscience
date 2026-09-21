@@ -216,6 +216,28 @@ async def test_untrusted_planner_batch_is_rejected_before_partial_output(proposa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("proposal", "reason", "options"),
+    [
+        (Speech(None), "invalid_speech", {}),
+        (ToolCall(None, {}, "tool"), "invalid_tool", {}),
+        (ToolCall("tool", {}, None), "invalid_tool", {}),
+        (Motion(None, {}), "invalid_proposal", {"enable_motion": True, "motion_context": Context()}),
+    ],
+)
+async def test_wrongly_typed_proposal_fields_hold_without_output(proposal, reason, options):
+    ports = Ports([proposal])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "fixture")
+
+    result = await pipeline(ports, guard, **options).run_turn("hello")
+    assert (result.status, result.reason) == ("held", reason)
+    assert all(event[0] not in ("synthesize", "enqueue", "execute") for event in ports.events)
+
+
+@pytest.mark.asyncio
 async def test_stalled_planner_holds_without_reaching_an_output():
     ports = Ports([Speech("should never speak")])
     cancelled = asyncio.Event()

@@ -333,11 +333,21 @@ class GuardedConversation:
         motion_observed_at: float | None = None
         try:
             if isinstance(proposal, Speech):
-                if not proposal.text.strip() or len(proposal.text) > 2000:
+                if (
+                    not isinstance(proposal.text, str)
+                    or not proposal.text.strip()
+                    or len(proposal.text) > 2000
+                ):
                     return TurnResult("held", reason="invalid_speech")
                 action = Action(kind="utterance", summary="speech proposal", text=proposal.text)
             elif isinstance(proposal, ToolCall):
-                if not proposal.name or len(proposal.name) > 80 or not proposal.summary.strip():
+                if (
+                    not isinstance(proposal.name, str)
+                    or not proposal.name
+                    or len(proposal.name) > 80
+                    or not isinstance(proposal.summary, str)
+                    or not proposal.summary.strip()
+                ):
                     return TurnResult("held", reason="invalid_tool")
                 try:
                     tool_arguments_json = _canonical_object(proposal.arguments, 4096)
@@ -353,6 +363,12 @@ class GuardedConversation:
             elif isinstance(proposal, Motion):
                 if not self.enable_motion or self.motion is None:
                     return TurnResult("held", reason="motion_not_enabled")
+                if (
+                    not isinstance(proposal.motion_class, str)
+                    or not proposal.motion_class.strip()
+                    or len(proposal.motion_class) > 80
+                ):
+                    return TurnResult("held", reason="invalid_proposal")
                 try:
                     motion_target_json = _canonical_object(proposal.target, 2048)
                 except (TypeError, ValueError, OverflowError, RecursionError):
