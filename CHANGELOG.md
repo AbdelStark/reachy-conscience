@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep one asyncio event loop for an operator-paced voice-host session, including sign actions and terminal stop; multi-turn and failure tests verify loop identity and cleanup.
 - Expire read-only Reflex hints from the relay timestamp's remaining 1.5-second freshness budget, rather than granting a second full local window after delayed receipt.
 - Add an opt-in, read-only Reflex event monitor with an exact loopback subscriber token, strict text-free schema/sequence/freshness checks, short-lived hints, and an operator `e` inspection command. No hint opens capture or drives output; fake WebSocket and actual Reflex-relay software tests are not joined-app or robot validation.
 - Join a cancelled microphone task even when an external stop's output-halt request fails; a fake-port race test holds capture cleanup open to verify stop cannot return early. This does not establish physical silence.

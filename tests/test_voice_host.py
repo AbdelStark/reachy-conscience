@@ -58,6 +58,57 @@ def test_operator_reloads_policy_between_explicit_turns_and_redacts_status(tmp_p
     assert "address" not in " ".join(reports)
 
 
+def test_operator_keeps_one_event_loop_across_turns_and_terminal_stop(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    loops = []
+
+    class LoopBoundSession(FakeSession):
+        async def run_once(self, *, listen_timeout_s=30.0):
+            loops.append(asyncio.get_running_loop())
+            return await super().run_once(listen_timeout_s=listen_timeout_s)
+
+        async def stop(self):
+            loops.append(asyncio.get_running_loop())
+            return await super().stop()
+
+    session = LoopBoundSession(guard, [TurnResult("complete", 1), TurnResult("hold")])
+    commands = iter(["", "", "q"])
+    operator_turns(
+        session,
+        store,
+        guard,
+        prompt=lambda _message: next(commands),
+        report=lambda _message: None,
+    )
+    assert len(loops) == 3
+    assert loops[0] is loops[1] is loops[2]
+    assert loops[0].is_closed()
+
+
+def test_operator_stops_on_the_same_loop_after_turn_failure(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    loops = []
+
+    class FailingSession(FakeSession):
+        async def run_once(self, *, listen_timeout_s=30.0):
+            loops.append(asyncio.get_running_loop())
+            raise RuntimeError("fixture turn failure")
+
+        async def stop(self):
+            loops.append(asyncio.get_running_loop())
+            return await super().stop()
+
+    session = FailingSession(guard)
+    with pytest.raises(RuntimeError, match="fixture turn failure"):
+        operator_turns(session, store, guard, prompt=lambda _message: "", report=lambda _message: None)
+    assert len(loops) == 2
+    assert loops[0] is loops[1]
+    assert loops[0].is_closed()
+    assert session.stops == 1
+
+
 def test_operator_keeps_host_required_note_confirmation_after_policy_edit(tmp_path):
     store = PolicyStore(tmp_path / "policy.json", registered_tools={"append_local_note"})
     guard = SimpleNamespace(policy=store.load())

@@ -74,6 +74,7 @@ def operator_turns(
         raise ValueError("sign ingress and guard must be enabled together")
     if sign_responder is not None and sign_ingress is None:
         raise ValueError("sign responses require sign ingress")
+    runner = asyncio.Runner()
     try:
         while True:
             try:
@@ -105,7 +106,7 @@ def operator_turns(
                     on_operator_quiet()
                 guard.policy = _effective_policy(policy_store.load(), required_confirmation)
                 try:
-                    result = asyncio.run(sign_responder())
+                    result = runner.run(sign_responder())
                 except Exception:
                     report("Sign response failed; requesting owned stop. Output may already have started.")
                     break
@@ -119,8 +120,8 @@ def operator_turns(
                 assert screen_sign is not None
                 guard.policy = _effective_policy(policy_store.load(), required_confirmation)
                 try:
-                    sign_text = asyncio.run(sign_ingress.read_once())
-                    result = asyncio.run(screen_sign(sign_text)) if sign_text else None
+                    sign_text = runner.run(sign_ingress.read_once())
+                    result = runner.run(screen_sign(sign_text)) if sign_text else None
                 except Exception:
                     report("Sign: unavailable; no output or action was dispatched.")
                     continue
@@ -132,12 +133,15 @@ def operator_turns(
             if on_operator_quiet is not None:
                 on_operator_quiet()
             guard.policy = _effective_policy(policy_store.load(), required_confirmation)
-            result = asyncio.run(session.run_once(listen_timeout_s=listen_timeout_s))
+            result = runner.run(session.run_once(listen_timeout_s=listen_timeout_s))
             report(f"Turn: {result.status}; guarded outputs: {result.delivered}.")
             if result.status in {"stopped", "interrupted", "output_error"}:
                 break
     finally:
-        asyncio.run(session.stop())
+        try:
+            runner.run(session.stop())
+        finally:
+            runner.close()
 
 
 def _effective_policy(policy: GuardPolicy, required_confirmation: frozenset[str]) -> GuardPolicy:
