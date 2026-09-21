@@ -237,9 +237,23 @@ async def guard_action(
         return Verdict("hold", "judgment_unavailable")
 
 
-_HARD_STOP = re.compile(r"^\s*(stop|freeze|hold still|arr[eê]te|stoppe)[.!]?\s*$", re.IGNORECASE)
+_POLITE_STOP = r"(?:please|s['’]il\s+te\s+pla[iî]t)"
+_HARD_STOP = re.compile(
+    rf"""^\s*
+    (?:(?:reachy(?:\s+mini)?|robot)(?:\s*[:,]\s*|\s+))?
+    (?:{_POLITE_STOP}\s+)?
+    (?:stop|freeze|hold\s+still|arr[eê]te(?:-toi)?|stoppe)
+    (?:\s+(?:now|moving|everything|the\s+robot|maintenant|le\s+robot))?
+    (?:\s+{_POLITE_STOP})?
+    [.!?]?\s*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
 
 
 def is_hard_stop(text: str) -> bool:
-    """Recognize an isolated emergency command before Jev or an LLM round trip."""
+    """Recognize a short direct stop command before Jev or an LLM round trip.
+
+    This is deliberately a bounded grammar, not a substring match: quoted,
+    negated, or embedded uses of "stop" must not cancel an unrelated turn.
+    """
     return bool(_HARD_STOP.fullmatch(text))

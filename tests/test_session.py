@@ -226,8 +226,9 @@ async def test_failed_previous_playback_flush_holds_without_capture():
 
 
 @pytest.mark.asyncio
-async def test_spoken_final_stop_bypasses_playback_guard_and_planner():
-    ports = Ports("stop")
+@pytest.mark.parametrize("transcript", ["stop", "Reachy, please stop."])
+async def test_spoken_final_stop_bypasses_playback_guard_and_planner(transcript):
+    ports = Ports(transcript)
     voice = session(ports)
     assert (await voice.run_once()).status == "stopped"
     assert ports.events == ["capture_start", "asr_final", "capture_stop", "stop", "halt"]
@@ -236,7 +237,7 @@ async def test_spoken_final_stop_bypasses_playback_guard_and_planner():
 
 @pytest.mark.asyncio
 async def test_model_routed_stop_is_terminal_for_owned_voice_session():
-    ports = Ports("please stop the robot")
+    ports = Ports("I want the robot to stop")
 
     async def guard(action):
         ports.events.append(f"guard_{action.kind}")

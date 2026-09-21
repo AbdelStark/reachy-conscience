@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Recognize short direct, polite or wake-word-prefixed stop commands locally before Jev, while excluding negated, quoted, or embedded uses; fake-session tests cover the guarded-output bypass without claiming spoken-stop availability during playback.
 - Require an opt-in motion-context provider with bounded collection and post-guard freshness checks; deterministically hold missing, stale, critical-battery, hot-motor, and larger-motion-near-person states before model or SDK dispatch. The voice host still has no live sensor provider and keeps motion disabled.
 - Arm owned speaker playback lazily only when approved speech reaches its audio sink; blocked, ignored, and no-input turns never call `start_playing()`. Fence stop against in-flight arming/enqueue and request a follow-up halt after a race; fake-port and SDK-boundary tests only.
 - Keep inbound route confidences in dedicated route metadata, not the ledger's top-three safety-judgment probabilities; add an export regression test.
