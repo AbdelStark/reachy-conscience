@@ -114,3 +114,21 @@ test("a stale ledger refresh cannot reveal a previous owner's rows after reconne
   assert.equal(byId("ledger-rows").children[0].children[0].textContent, "No verdicts yet.");
   assert.equal(byId("workspace").hidden, false);
 });
+
+test("camera-sign ledger rows show only a source label, not OCR text", async () => {
+  const { context, byId } = consoleHarness((path) => {
+    if (path === "/api/policy") return Promise.resolve(response(policy));
+    if (path === "/api/ledger") return Promise.resolve(response({ rows: [{
+      t: 1, kind: "inbound", source: "camera_sign", verdict: "block",
+      reason: "injection", latency_ms: 12, route_choice: null,
+    }] }));
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  byId("token").value = "test-owner-token";
+  await context.connect();
+  const row = byId("ledger-rows").children[0];
+  assert.equal(row.children[1].textContent, "camera sign");
+  assert.equal(row.children[2].textContent, "block");
+  assert.equal(row.children.length, 6);
+  assert.equal(byId("workspace").hidden, false);
+});

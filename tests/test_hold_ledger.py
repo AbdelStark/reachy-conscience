@@ -64,7 +64,8 @@ def test_ledger_minimizes_sensitive_text_and_export_by_default(tmp_path) -> None
     exported = ledger.export_jsonl()
     assert secret not in exported
     value = json.loads(exported)
-    assert value["schema"] == "conscience.verdict@2"
+    assert value["schema"] == "conscience.verdict@3"
+    assert value["source"] is None
     assert value["route"] is None
     assert value["probabilities"] == {"irreversible": 0.8, "matches_request": 0.9, "needs_confirmation": 0.7}
     assert value["redteam"] is True
@@ -96,6 +97,7 @@ def test_ledger_opt_in_summary_and_legacy_migration(tmp_path) -> None:
     assert "opted-in note" not in ledger.export_jsonl()
     assert "legacy note" in ledger.export_jsonl(include_summary=True)
     assert json.loads(ledger.export_jsonl().splitlines()[0])["route"] is None
+    assert json.loads(ledger.export_jsonl().splitlines()[0])["source"] is None
     ledger.close()
 
     default_reader = Ledger(path)

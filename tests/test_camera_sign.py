@@ -10,6 +10,7 @@ import pytest
 from reachy_conscience import (
     CameraSignIngress,
     GuardedConversation,
+    Ledger,
     LocalTesseractOcr,
     ReachyCameraFrame,
     Speech,
@@ -57,7 +58,7 @@ async def test_one_frame_is_bounded_and_only_text_leaves_ingress():
 
 
 @pytest.mark.asyncio
-async def test_camera_sign_is_guarded_as_data_and_never_acts_as_stop_command():
+async def test_camera_sign_is_guarded_as_data_and_never_acts_as_stop_command(tmp_path):
     events = []
 
     class Ports:
@@ -83,16 +84,26 @@ async def test_camera_sign_is_guarded_as_data_and_never_acts_as_stop_command():
         return Verdict("block", "injection")
 
     ports = Ports()
+    ledger = Ledger(tmp_path / "sign-ledger.db")
     app = GuardedConversation(
         planner=ports,
         guard=guard,
         synthesizer=ports,
         audio=ports,
         emergency_stop=ports,
+        ledger=ledger,
     )
-    result = await app.screen_sign("stop")
-    assert (result.status, result.reason) == ("block", "injection")
-    assert events == [("guard", "inbound", "camera_sign", "stop")]
+    try:
+        result = await app.screen_sign("stop")
+        assert (result.status, result.reason) == ("block", "injection")
+        assert events == [("guard", "inbound", "camera_sign", "stop")]
+        assert ledger.recent()[0]["source"] == "camera_sign"
+        exported = ledger.export_jsonl()
+        assert '"source":"camera_sign"' in exported
+        assert '"schema":"conscience.verdict@3"' in exported
+        assert "stop" not in exported
+    finally:
+        ledger.close()
 
 
 @pytest.mark.asyncio

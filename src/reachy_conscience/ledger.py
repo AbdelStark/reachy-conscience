@@ -28,7 +28,8 @@ class Ledger:
                 "verdict TEXT NOT NULL, reason TEXT NOT NULL, "
                 "probabilities TEXT NOT NULL, latency_ms REAL NOT NULL, "
                 "bank TEXT, model TEXT, outcome TEXT, redteam INTEGER NOT NULL DEFAULT 0, "
-                "route_choice TEXT, route_confidence REAL, fast_command TEXT, command_confidence REAL)"
+                "route_choice TEXT, route_confidence REAL, fast_command TEXT, command_confidence REAL, "
+                "source TEXT)"
             )
             # Existing preview databases had eight columns. Add only missing
             # metadata; never rewrite or discard prior verdict rows.
@@ -42,6 +43,7 @@ class Ledger:
                 ("route_confidence", "REAL"),
                 ("fast_command", "TEXT"),
                 ("command_confidence", "REAL"),
+                ("source", "TEXT"),
             ):
                 if name not in columns:
                     self.connection.execute(f"ALTER TABLE verdicts ADD COLUMN {name} {definition}")
@@ -94,7 +96,7 @@ class Ledger:
         cursor = self.connection.execute(
             "INSERT INTO verdicts(t, kind, summary, verdict, reason, probabilities, latency_ms, "
             "bank, model, outcome, redteam, route_choice, route_confidence, fast_command, "
-            "command_confidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "command_confidence, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 time.time(),
                 action.kind,
@@ -111,6 +113,7 @@ class Ledger:
                 route.confidence if route else None,
                 route.fast_command if route else None,
                 route.command_confidence if route else None,
+                action.source,
             ),
         )
         self.connection.commit()
@@ -122,7 +125,7 @@ class Ledger:
         rows = self.connection.execute(
             "SELECT id, t, kind, summary, verdict, reason, probabilities, latency_ms, "
             "bank, model, outcome, redteam, route_choice, route_confidence, fast_command, "
-            "command_confidence "
+            "command_confidence, source "
             "FROM verdicts ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -146,6 +149,7 @@ class Ledger:
                         "route_confidence",
                         "fast_command",
                         "command_confidence",
+                        "source",
                     ),
                     row,
                     strict=True,
@@ -167,12 +171,12 @@ class Ledger:
         rows = self.connection.execute(
             "SELECT id, t, kind, summary, verdict, reason, probabilities, latency_ms, "
             "bank, model, outcome, redteam, route_choice, route_confidence, fast_command, "
-            "command_confidence FROM verdicts ORDER BY id ASC"
+            "command_confidence, source FROM verdicts ORDER BY id ASC"
         )
         lines = []
         for row in rows:
             record = {
-                "schema": "conscience.verdict@2",
+                "schema": "conscience.verdict@3",
                 "id": row[0],
                 "t": row[1],
                 "kind": row[2],
@@ -192,6 +196,7 @@ class Ledger:
                     "fast_command": row[14],
                     "command_confidence": row[15],
                 },
+                "source": row[16],
             }
             if include_summary:
                 record["summary"] = row[3]
