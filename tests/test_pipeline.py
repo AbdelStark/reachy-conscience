@@ -493,6 +493,83 @@ async def test_hard_stop_bypasses_guard_and_cancels_pending_turn():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stopped_by_route", [False, True])
+async def test_stop_is_terminal_for_direct_pipeline_callers(stopped_by_route):
+    ports = Ports([Speech("would have spoken")])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        if stopped_by_route and action.kind == "inbound":
+            return GuardAssessment(
+                Verdict("approve", "fixture"),
+                route=InboundRoute("fast_path", 0.9, "stop", 0.9),
+            )
+        return Verdict("approve", "fixture")
+
+    app = pipeline(ports, guard, require_inbound_route=stopped_by_route)
+    first = "I want the robot to stop" if stopped_by_route else "stop"
+    assert (await app.run_turn(first)).status == "stopped"
+    before = list(ports.events)
+    assert before == ([("guard", "inbound"), ("stop",)] if stopped_by_route else [("stop",)])
+    assert (await app.run_turn("say hello")).status == "stopped"
+    assert (await app.screen_sign("say hello")).status == "stopped"
+    assert (await app.respond_to_sign("say hello")).status == "stopped"
+    assert ports.events == before
+    assert (await app.run_turn("stop")).status == "stopped"
+    assert ports.events == before + [("stop",)]
+
+
+@pytest.mark.asyncio
+async def test_queued_turn_cannot_resume_after_hard_stop():
+    ports = Ports([Speech("would have spoken")])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        entered.set()
+        await release.wait()
+        return Verdict("approve", "fixture")
+
+    app = pipeline(ports, guard)
+    first = asyncio.create_task(app.run_turn("first"))
+    await entered.wait()
+    second = asyncio.create_task(app.run_turn("second"))
+    await asyncio.sleep(0)
+    assert (await app.run_turn("stop")).status == "stopped"
+    release.set()
+    assert (await first).status == "interrupted"
+    assert (await second).status == "stopped"
+    assert ports.events == [("guard", "inbound"), ("stop",)]
+
+
+@pytest.mark.asyncio
+async def test_failed_stop_request_still_retires_pipeline():
+    ports = Ports([Speech("would have spoken")])
+
+    async def guard(_action):
+        return Verdict("approve", "fixture")
+
+    async def failed_stop():
+        ports.events.append(("stop",))
+        raise RuntimeError("stop request failed")
+
+    ports.stop = failed_stop
+    app = pipeline(ports, guard)
+    with pytest.raises(RuntimeError, match="stop request failed"):
+        await app.run_turn("stop")
+    assert (await app.run_turn("say hello")).status == "stopped"
+    assert ports.events == [("stop",)]
+
+    async def recovered_stop():
+        ports.events.append(("stop",))
+
+    ports.stop = recovered_stop
+    assert (await app.run_turn("stop")).status == "stopped"
+    assert ports.events == [("stop",), ("stop",)]
+
+
+@pytest.mark.asyncio
 async def test_inbound_block_stops_planner_and_all_outputs():
     ports = Ports([Speech("hello")])
 

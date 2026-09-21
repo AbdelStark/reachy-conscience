@@ -200,6 +200,7 @@ class GuardedConversation:
         self.require_inbound_route = require_inbound_route
         self._turn_lock = asyncio.Lock()
         self._generation = 0
+        self._stopped = False
 
     async def _judge(self, action: Action) -> GuardAssessment:
         start = time.monotonic()
@@ -250,6 +251,7 @@ class GuardedConversation:
 
     async def _stop_now(self) -> TurnResult:
         """Terminal owned stop, independent of the planner or output guard."""
+        self._stopped = True
         self._generation += 1
         revoke_audio = getattr(self.audio, "revoke", None)
         if callable(revoke_audio):
@@ -265,11 +267,17 @@ class GuardedConversation:
 
     async def run_turn(self, transcript: str) -> TurnResult:
         if not isinstance(transcript, str) or not transcript.strip() or len(transcript) > 2000:
+            if self._stopped:
+                return TurnResult("stopped")
             return TurnResult("rejected", reason="invalid_transcript")
+        # A second direct stop may retry a failed or unacknowledged halt request.
         if is_hard_stop(transcript):
-            # This path must not wait for a model, planner, TTS, or turn lock.
             return await self._stop_now()
+        if self._stopped:
+            return TurnResult("stopped")
         async with self._turn_lock:
+            if self._stopped:
+                return TurnResult("stopped")
             generation = self._generation
             inbound = Action(kind="inbound", summary="inbound utterance", untrusted_text=transcript)
             inbound_assessment = await self._judge(inbound)
@@ -348,9 +356,13 @@ class GuardedConversation:
         A sign is never a local hard-stop command. A valid approval only means
         the inbound guard did not reject the text; it does not execute it.
         """
+        if self._stopped:
+            return TurnResult("stopped")
         if not isinstance(text, str) or not text.strip() or len(text) > 2000:
             return TurnResult("rejected", reason="invalid_sign_text")
         async with self._turn_lock:
+            if self._stopped:
+                return TurnResult("stopped")
             generation = self._generation
             action = Action(kind="inbound", summary="camera sign", untrusted_text=text, source="camera_sign")
             assessment = await self._judge(action)
@@ -364,9 +376,13 @@ class GuardedConversation:
         The sign cannot invoke fast commands, tools, or motion. Only a
         proposal-only planner with a dedicated ``plan_sign`` method is used.
         """
+        if self._stopped:
+            return TurnResult("stopped")
         if not isinstance(text, str) or not text.strip() or len(text) > 2000:
             return TurnResult("rejected", reason="invalid_sign_text")
         async with self._turn_lock:
+            if self._stopped:
+                return TurnResult("stopped")
             generation = self._generation
             inbound = Action(kind="inbound", summary="camera sign", untrusted_text=text, source="camera_sign")
             assessment = await self._judge(inbound)
