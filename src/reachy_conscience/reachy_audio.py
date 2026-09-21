@@ -17,6 +17,8 @@ MAX_INPUT_SECONDS = 1
 
 
 class ReachyMediaPort(Protocol):
+    audio: AudioPlayerPort | None
+
     def get_output_audio_samplerate(self) -> int: ...
     def get_output_channels(self) -> int: ...
     def start_playing(self) -> None: ...
@@ -27,6 +29,10 @@ class ReachyMediaPort(Protocol):
     def start_recording(self) -> None: ...
     def get_audio_sample(self) -> Any | None: ...
     def stop_recording(self) -> None: ...
+
+
+class AudioPlayerPort(Protocol):
+    def clear_player(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,8 +49,9 @@ class ReachyMediaAudio:
 
     Speaker input is complete, guarded PCM in interleaved float32 little-endian
     at 16 kHz. ``push_audio_sample`` is non-blocking; ``halt_audio`` disables
-    subsequent pushes and stops the SDK playback pipeline. This has only been
-    source-inspected and fake-port tested, not measured on a physical robot.
+    subsequent pushes, asks the pinned backend to flush queued audio, then
+    stops playback. This has only been source-inspected and fake-port tested,
+    not measured on a physical robot.
     """
 
     def __init__(self, media: ReachyMediaPort, *, output_channels: int = 1) -> None:
@@ -56,14 +63,17 @@ class ReachyMediaAudio:
         self._playing = False
         self._recording = False
 
-    def _available(self) -> None:
+    def _available(self, *, for_playback: bool = False) -> None:
         # MediaManager methods can silently return when its backend is absent.
-        if getattr(self.media, "audio", object()) is None:
+        backend = getattr(self.media, "audio", None)
+        if backend is None:
             raise RuntimeError("Reachy audio backend unavailable")
+        if for_playback and not callable(getattr(backend, "clear_player", None)):
+            raise RuntimeError("Reachy audio backend cannot flush queued playback")
 
     def _arm_playback(self) -> None:
         with self._lock:
-            self._available()
+            self._available(for_playback=True)
             if self.media.get_output_audio_samplerate() != SAMPLE_RATE:
                 raise RuntimeError("unsupported Reachy output sample rate")
             if self.media.get_output_channels() not in (1, 2):
@@ -103,10 +113,18 @@ class ReachyMediaAudio:
             # SDK 1.10's local backend shares a GStreamer pipeline for input
             # and output; stopping playback can invalidate capture as well.
             self._recording = False
-            self.media.stop_playing()
+            try:
+                self._available(for_playback=True)
+                assert self.media.audio is not None
+                self.media.audio.clear_player()
+            finally:
+                # WebRTC stop_playing does not flush queued PCM; the pinned
+                # backend's clear_player does. Still request stop if flushing
+                # fails, while keeping this adapter disarmed.
+                self.media.stop_playing()
 
     async def halt_audio(self) -> None:
-        """Stop the SDK playback pipeline and require explicit re-arming."""
+        """Request queue flush and stop; require explicit re-arming."""
         await asyncio.to_thread(self._halt_audio)
 
     def _start_capture(self) -> None:

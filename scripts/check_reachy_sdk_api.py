@@ -2,7 +2,9 @@
 
 from reachy_mini.io.abstract import AbstractClient
 from reachy_mini.io.protocol import GotoTaskRequest, StopMoveCmd
+from reachy_mini.media.audio_gstreamer import GStreamerAudio
 from reachy_mini.media.media_manager import MediaManager
+from reachy_mini.media.webrtc_client_gstreamer import GstWebRTCClient
 from reachy_mini.utils import create_head_pose
 from reachy_mini.utils.interpolation import InterpolationTechnique
 
@@ -22,6 +24,9 @@ REQUIRED = (
 missing = [name for name in REQUIRED if not callable(getattr(MediaManager, name, None))]
 if missing:
     raise SystemExit(f"Reachy Mini media API changed: {missing}")
+for backend in (GStreamerAudio, GstWebRTCClient):
+    if not callable(getattr(backend, "clear_player", None)):
+        raise SystemExit(f"Reachy Mini {backend.__name__} queue-flush API changed")
 motion_methods = ("send_task_request", "wait_for_task_completion", "send_command")
 missing_motion = [name for name in motion_methods if not callable(getattr(AbstractClient, name, None))]
 if missing_motion or not callable(create_head_pose) or not hasattr(InterpolationTechnique, "MIN_JERK"):

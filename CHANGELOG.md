@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Request a pinned-SDK `clear_player()` queue flush before playback stop, fail closed when the flush API is missing, and test flush failure/stop ordering without a robot.
+- Install the newly built wheel into a fresh isolated CI environment before its import smoke, avoiding reuse of an older same-version wheel cache.
 - Add an independently owned, non-streaming conversation pipeline with guards before speech synthesis/audio enqueue, tool dispatch, and motion dispatch.
 - Interrupt pending work on local hard stop; hold or block stops the rest of a turn.
 - Keep motion disabled by default; effectful tools require explicit registration and a separate owner-approval port for exact canonical arguments before dispatch.

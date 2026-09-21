@@ -8,7 +8,7 @@ from reachy_conscience import GuardedConversation, ReachyMediaAudio, Speech, Ver
 
 class FakeMedia:
     def __init__(self):
-        self.audio = object()
+        self.audio = self
         self.output_rate = 16_000
         self.input_rate = 16_000
         self.output_channels = 2
@@ -30,6 +30,9 @@ class FakeMedia:
 
     def stop_playing(self):
         self.calls.append("stop_playing")
+
+    def clear_player(self):
+        self.calls.append("clear_player")
 
     def get_input_audio_samplerate(self):
         return self.input_rate
@@ -60,7 +63,7 @@ async def test_pcm_output_is_bounded_and_halt_requires_explicit_rearm():
     assert media.calls[1][0] == "push"
     assert media.calls[1][1].shape == (2,)
     await output.halt_audio()
-    assert media.calls[-1] == "stop_playing"
+    assert media.calls[-2:] == ["clear_player", "stop_playing"]
     with pytest.raises(RuntimeError, match="not armed"):
         await output.enqueue(pcm)
     await output.arm_playback()
@@ -84,6 +87,34 @@ async def test_bad_audio_and_missing_backend_fail_before_push():
     assert all(not isinstance(call, tuple) for call in media.calls)
     media.audio = None
     with pytest.raises(RuntimeError, match="unavailable"):
+        await output.enqueue(np.array([0.1], dtype=np.float32).tobytes())
+
+
+@pytest.mark.asyncio
+async def test_backend_without_queue_flush_cannot_arm():
+    media = FakeMedia()
+    media.audio = object()
+    output = ReachyMediaAudio(media)
+    with pytest.raises(RuntimeError, match="cannot flush"):
+        await output.arm_playback()
+    assert media.calls == []
+
+
+@pytest.mark.asyncio
+async def test_flush_failure_still_requests_stop_and_disarms():
+    media = FakeMedia()
+    output = ReachyMediaAudio(media)
+    await output.arm_playback()
+
+    def fail_flush():
+        media.calls.append("clear_player_failed")
+        raise RuntimeError("flush failed")
+
+    media.clear_player = fail_flush
+    with pytest.raises(RuntimeError, match="flush failed"):
+        await output.halt_audio()
+    assert media.calls[-2:] == ["clear_player_failed", "stop_playing"]
+    with pytest.raises(RuntimeError, match="not armed"):
         await output.enqueue(np.array([0.1], dtype=np.float32).tobytes())
 
 
@@ -135,4 +166,4 @@ async def test_guard_blocks_before_reachy_push_and_stop_halts_owned_audio():
     assert (await app.run_turn("hello")).status == "block"
     assert all(not isinstance(call, tuple) for call in media.calls)
     assert (await app.run_turn("stop")).status == "stopped"
-    assert media.calls[-1] == "stop_playing"
+    assert media.calls[-2:] == ["clear_player", "stop_playing"]

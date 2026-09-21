@@ -145,9 +145,10 @@ async def test_synthetic_pcm_crosses_owned_sdk_boundary_only_after_guard(output_
     events = []
 
     class Media:
-        audio = object()
+        audio = None
 
         def __init__(self):
+            self.audio = self
             self.chunks = [
                 np.concatenate(
                     [np.full(320 * 12, 0.2, dtype=np.float32), np.zeros(320 * 30, dtype=np.float32)]
@@ -183,6 +184,9 @@ async def test_synthetic_pcm_crosses_owned_sdk_boundary_only_after_guard(output_
 
         def stop_playing(self):
             events.append("audio_stop")
+
+        def clear_player(self):
+            events.append("audio_flush")
 
     class Asr:
         async def transcribe(self, _pcm):
