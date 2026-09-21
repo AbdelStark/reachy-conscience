@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reachy-conscience"
+version = "0.0.1"
+description = "An inspectable action guard for LLM-driven Reachy Mini apps"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Abdelhamid" }]
+keywords = ["reachy-mini", "robotics", "jev", "guardrails"]
+classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13", "Topic :: Scientific/Engineering :: Artificial Intelligence"]
+dependencies = []
+
+[project.optional-dependencies]
+jev = ["typesafe-sdk>=0.7.0"]
+robot = ["reachy-mini>=1.10.0"]
+
+[project.urls]
+Repository = "https://github.com/AbdelStark/reachy-conscience"
+Issues = "https://github.com/AbdelStark/reachy-conscience/issues"
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.13", "build>=1.2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reachy_conscience"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
