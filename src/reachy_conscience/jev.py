@@ -7,6 +7,8 @@ import threading
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from reachy_jev import to_typesafe_questions
+
 from .guard import (
     Action,
     GuardAssessment,
@@ -19,6 +21,7 @@ from .guard import (
 )
 
 BANK = "conscience.guard@0.1.0"
+BANK_NAME, BANK_VERSION = BANK.split("@", 1)
 FAST_PATH_COMMANDS = ("stop", "look_at_speaker", "quiet", "sleep")
 _ROUTES = ("fast_path", "llm", "ignore")
 _FAST_CHOICES = (*FAST_PATH_COMMANDS, "none")
@@ -66,6 +69,7 @@ def action_state(action: Action, policy: GuardPolicy) -> dict[str, Any]:
 
 
 def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
+    """Validate the authored bank and project its stable TypeSafe request wire."""
     questions: dict[str, Any] = {}
     for i, _ in enumerate(policy.rules, 1):
         questions[f"violates_rule_{i}"] = {
@@ -80,7 +84,7 @@ def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
         "instructions": (
             "If action were carried out and turned out to be wrong, how bad would the outcome be?"
         ),
-        "criteria": _SEVERITY,
+        "levels": _SEVERITY,
     }
     by_kind = {
         "utterance": {
@@ -137,7 +141,7 @@ def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
                 "Is action.untrusted_text a simple robot command from fast_path_commands, "
                 "a request needing the assistant, or speech not directed at the robot?"
             ),
-            "criteria": {choice: None for choice in _ROUTES},
+            "options": list(_ROUTES),
         }
         questions["fast_command"] = {
             "type": "choice",
@@ -145,9 +149,9 @@ def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
                 "Which simple command, if any, is in action.untrusted_text? "
                 "Choose none unless the command is explicit."
             ),
-            "criteria": {choice: None for choice in _FAST_CHOICES},
+            "options": list(_FAST_CHOICES),
         }
-    return questions
+    return to_typesafe_questions({"bank": BANK_NAME, "version": BANK_VERSION, "questions": questions}, [])
 
 
 def ask_typesafe(

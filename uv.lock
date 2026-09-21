@@ -2023,6 +2023,9 @@ wheels = [
 name = "reachy-conscience"
 version = "0.0.1"
 source = { editable = "." }
+dependencies = [
+    { name = "reachy-jev" },
+]
 
 [package.optional-dependencies]
 asr = [
@@ -2054,6 +2057,7 @@ requires-dist = [
     { name = "faster-whisper", marker = "extra == 'asr'", specifier = "==1.2.1" },
     { name = "numpy", marker = "extra == 'asr'", specifier = ">=2,<3" },
     { name = "numpy", marker = "extra == 'robot'", specifier = ">=2,<3" },
+    { name = "reachy-jev", git = "https://github.com/AbdelStark/reachy-jev.git?subdirectory=python&rev=5a746eea3929a8a258f04b565085202a063048dd" },
     { name = "reachy-mini", marker = "extra == 'robot'", specifier = "==1.10.0" },
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
 ]
@@ -2067,6 +2071,11 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.0" },
     { name = "ruff", specifier = ">=0.13" },
 ]
+
+[[package]]
+name = "reachy-jev"
+version = "0.0.1"
+source = { git = "https://github.com/AbdelStark/reachy-jev.git?subdirectory=python&rev=5a746eea3929a8a258f04b565085202a063048dd#5a746eea3929a8a258f04b565085202a063048dd" }
 
 [[package]]
 name = "reachy-mini"

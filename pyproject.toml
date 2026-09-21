@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "Abdelhamid" }]
 keywords = ["reachy-mini", "robotics", "jev", "guardrails"]
 classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13", "Topic :: Scientific/Engineering :: Artificial Intelligence"]
-dependencies = []
+dependencies = ["reachy-jev @ git+https://github.com/AbdelStark/reachy-jev.git@5a746eea3929a8a258f04b565085202a063048dd#subdirectory=python"]
 
 [project.scripts]
 conscience-owner-console = "reachy_conscience.owner_console_cli:main"
@@ -32,6 +32,9 @@ dev = ["pytest>=8.3", "pytest-asyncio>=1.0", "numpy>=2,<3", "ruff>=0.13", "build
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reachy_conscience"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

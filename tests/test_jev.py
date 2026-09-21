@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -67,6 +68,34 @@ def test_questions_use_sdk_score_and_noul_wire_shapes() -> None:
     assert len(questions["severity"]["criteria"]) == 5
     assert questions["violates_rule_1"]["type"] == "noul"
     assert questions["safe_given_state"]["type"] == "noul"
+
+
+@pytest.mark.parametrize(
+    ("action", "wire_digest"),
+    [
+        (
+            Action(kind="utterance", summary="fixture"),
+            "3c7990e2d96574a7bcdff5eb71fb5b47e5489bdb83be4b41cff6243f3f246af2",
+        ),
+        (
+            Action(kind="tool_call", summary="fixture", tool="append_local_note"),
+            "19dbc9983eba9fdd3f74bf98d8d41174a209c021a3ef6e5d38d473a6eceec9b9",
+        ),
+        (
+            Action(kind="motion", summary="fixture", motion_class="small_gesture"),
+            "4b2d812a6c7c25a690d96a5d8314e0e2bf28dce1a00f14a28c5fac09b01cca97",
+        ),
+        (
+            Action(kind="inbound", summary="fixture"),
+            "8f08202d5d8bc125a3f97df01749f5bee0b73cb31ac29d005382d773e9e899e1",
+        ),
+    ],
+)
+def test_shared_bank_projection_preserves_versioned_request_wire(action, wire_digest) -> None:
+    policy = GuardPolicy(rules=("Never reveal a password", "Do not startle a nearby person"))
+    wire = guard_questions(action, policy)
+    encoded = json.dumps(wire, sort_keys=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(encoded).hexdigest() == wire_digest
 
 
 def test_one_batched_sdk_request_and_numeric_severity() -> None:
