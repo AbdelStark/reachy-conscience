@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Join a cancelled microphone task even when an external stop's output-halt request fails; a fake-port race test holds capture cleanup open to verify stop cannot return early. This does not establish physical silence.
 - Add a self-checking no-robot owned voice-session walkthrough showing approved speech, pre-synthesis blocked output, and direct local stop across separate fake ports; CI runs it on both supported test Pythons.
 - Add an opt-in, text-free loopback speaking assertion for Reflex after owned audio enqueue, with short heartbeats and operator-declared quiet; it is not an SDK playback receipt, guard, or hardware-validated turn-taking integration.
 - Add a separately enabled operator-triggered sign response path: inbound sign guard, one speech-only local planner proposal, sign-instruction-following output judgment, then owned TTS/audio. Tool, motion, and hard-stop paths remain unavailable from signs; fixture tests do not establish live OCR or robot behavior.

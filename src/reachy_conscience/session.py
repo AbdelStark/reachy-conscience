@@ -155,17 +155,18 @@ class OwnedVoiceSession:
             return result
 
     async def stop(self) -> TurnResult:
-        """Interrupt capture and the guarded turn without waiting for either."""
+        """Request output stop promptly, then join any cancelled capture cleanup."""
         self._stopped = True
         capture = self._capture_task
         if capture is not None and not capture.done():
             capture.cancel()
-        result = await self.conversation.run_turn("stop")
-        if capture is not None:
-            try:
-                await capture
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass  # Capture failure cannot authorize another action.
-        return result
+        try:
+            return await self.conversation.run_turn("stop")
+        finally:
+            if capture is not None:
+                try:
+                    await capture
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass  # Capture failure cannot authorize another action.

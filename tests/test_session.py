@@ -298,6 +298,41 @@ async def test_external_stop_cancels_capture_without_planning():
 
 
 @pytest.mark.asyncio
+async def test_failed_output_stop_still_waits_for_cancelled_capture_cleanup():
+    class SlowCapturePorts(Ports):
+        def __init__(self):
+            super().__init__()
+            self.cleanup_started = asyncio.Event()
+            self.cleanup_release = asyncio.Event()
+
+        async def listen_once(self, *, timeout_s):
+            self.events.append("capture_start")
+            self.capture_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cleanup_started.set()
+                await self.cleanup_release.wait()
+                self.events.append("capture_stop")
+
+    ports = SlowCapturePorts()
+    ports.fail_halt = True
+    voice = session(ports)
+    pending = asyncio.create_task(voice.run_once())
+    await ports.capture_started.wait()
+    stopper = asyncio.create_task(voice.stop())
+    await ports.cleanup_started.wait()
+    await asyncio.sleep(0)
+    assert not stopper.done(), "stop must join microphone cleanup even if audio halt fails"
+    ports.cleanup_release.set()
+    with pytest.raises(OSError, match="queue flush unavailable"):
+        await stopper
+    assert (await pending).status == "interrupted"
+    assert ports.events.count("capture_stop") == 1
+    assert "plan" not in ports.events and "arm" not in ports.events
+
+
+@pytest.mark.asyncio
 async def test_stop_during_playback_arm_disarms_again_and_never_dispatches():
     ports = Ports()
     ports.wait_arm = True
