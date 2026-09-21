@@ -17,4 +17,6 @@ assert verdict.kind == "hold"  # confirmation wins even if model misses it
 
 The caller must put this guard *before* TTS, tool dispatch, and motion execution. An after-the-fact observer cannot block an action. On missing or malformed model output, tools and motions do not execute. Holds expire without execution. The ledger stores short summaries and probabilities, not raw transcripts, by default.
 
+An irreversible tool call is held for owner confirmation even if Jev assigns low severity. This is a policy decision in code, not a claim that the model can reliably identify every external effect. Integrators must also place known effectful tools in `confirm_before`.
+
 Run `uv sync --dev`, `uv run ruff check .`, and `uv run pytest`. See [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

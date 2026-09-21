@@ -133,9 +133,8 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
         p = _p(answers, f"violates_rule_{i}")
         if p is not None and p >= policy.hold_floor:
             return Verdict("hold", f"uncertain_rule_{i}")
-    if (
-        action.kind == "tool_call" and severity >= 2 and _p(answers, "irreversible") > 0.5  # type: ignore[operator]
-    ):
+    # External effects need owner confirmation even when the model assigns low severity.
+    if action.kind == "tool_call" and _p(answers, "irreversible") > 0.5:  # type: ignore[operator]
         return Verdict("hold", "irreversible_tool")
     if action.kind == "inbound" and _p(answers, "asks_to_change_rules") >= policy.hold_floor:  # type: ignore[operator]
         return Verdict("hold", "rule_change_request")

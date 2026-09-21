@@ -62,11 +62,17 @@ def test_inbound_injection_and_tool_mismatch() -> None:
     )
 
 
-def test_severity_and_irreversibility_hold_only_together() -> None:
+def test_irreversible_tool_always_holds_even_when_severity_is_low() -> None:
     action = Action(kind="tool_call", tool="send_message", summary="send a reminder")
     base = {"matches_request": 0.9, "irreversible": 0.9, "needs_confirmation": 0.1}
-    assert decide(action, {**base, "severity": "minor"}, GuardPolicy()).kind == "approve"
-    assert decide(action, {**base, "severity": "moderate"}, GuardPolicy()).kind == "hold"
+    for severity in ("minor", "moderate", "severe"):
+        verdict = decide(action, {**base, "severity": severity}, GuardPolicy())
+        assert verdict.kind == "hold"
+        assert verdict.reason == "irreversible_tool"
+    assert (
+        decide(action, {**base, "irreversible": 0.1, "severity": "minor"}, GuardPolicy()).kind
+        == "approve"
+    )
 
 
 def test_rule_lint_and_hard_stop() -> None:
