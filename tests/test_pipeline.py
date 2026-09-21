@@ -196,6 +196,70 @@ async def test_approved_speech_is_synthesized_only_after_guard():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "proposals",
+    [
+        [Speech("valid first"), Speech("two"), Speech("three"), Speech("four"), Speech("five")],
+        [Speech("valid first"), object()],
+        "not a proposal sequence",
+    ],
+)
+async def test_untrusted_planner_batch_is_rejected_before_partial_output(proposals):
+    ports = Ports(proposals)
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "fixture")
+
+    result = await pipeline(ports, guard).run_turn("hello")
+    assert (result.status, result.reason) == ("held", "invalid_proposals")
+    assert ports.events == [("guard", "inbound"), ("plan", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_stalled_planner_holds_without_reaching_an_output():
+    ports = Ports([Speech("should never speak")])
+    cancelled = asyncio.Event()
+
+    async def plan(_transcript):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def guard(_action):
+        return Verdict("approve", "fixture")
+
+    ports.plan = plan
+    result = await pipeline(ports, guard, planner_timeout_s=0.01).run_turn("hello")
+    assert (result.status, result.reason) == ("held", "planner_unavailable")
+    assert cancelled.is_set()
+    assert ports.events == []
+
+
+@pytest.mark.asyncio
+async def test_stalled_synthesis_holds_without_enqueuing_audio():
+    ports = Ports([Speech("approved but unsynthesized")])
+    cancelled = asyncio.Event()
+
+    async def synthesize(_text):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "fixture")
+
+    ports.synthesize = synthesize
+    result = await pipeline(ports, guard, synthesis_timeout_s=0.01).run_turn("hello")
+    assert (result.status, result.reason) == ("held", "synthesis_unavailable")
+    assert cancelled.is_set()
+    assert all(event[0] != "enqueue" for event in ports.events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("proposal", "answers", "options"),
     [
         (

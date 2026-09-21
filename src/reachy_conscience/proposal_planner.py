@@ -14,11 +14,10 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Any
 
-from .pipeline import Motion, Proposal, Speech, ToolCall
+from .pipeline import MAX_PROPOSALS, Motion, Proposal, Speech, ToolCall
 
 MAX_RESPONSE_BYTES = 65_536
 MAX_PROPOSAL_BYTES = 16_384
-MAX_PROPOSALS = 4
 
 PROPOSAL_SCHEMA: dict[str, Any] = {
     "type": "object",

@@ -39,6 +39,7 @@ class Motion:
 Proposal = Speech | ToolCall | Motion
 Guard = Callable[[Action], Awaitable[Verdict | GuardAssessment]]
 _CONFIRMABLE_HOLDS = frozenset({"confirm_before", "model_requests_confirmation", "irreversible_tool"})
+MAX_PROPOSALS = 4
 
 
 def _canonical_object(value: Mapping[str, Any], max_bytes: int) -> str:
@@ -138,11 +139,24 @@ class GuardedConversation:
         max_motion_context_age_s: float = 1.0,
         ledger: Ledger | None = None,
         guard_timeout_s: float = 2.0,
+        planner_timeout_s: float = 35.0,
+        synthesis_timeout_s: float = 30.0,
         approval_timeout_s: float = 30.0,
         require_inbound_route: bool = False,
     ) -> None:
         if guard_timeout_s <= 0:
             raise ValueError("guard timeout must be positive")
+        if (
+            isinstance(planner_timeout_s, bool)
+            or not isinstance(planner_timeout_s, (int, float))
+            or not math.isfinite(planner_timeout_s)
+            or not 0 < planner_timeout_s <= 120
+            or isinstance(synthesis_timeout_s, bool)
+            or not isinstance(synthesis_timeout_s, (int, float))
+            or not math.isfinite(synthesis_timeout_s)
+            or not 0 < synthesis_timeout_s <= 120
+        ):
+            raise ValueError("invalid planner or synthesis timeout")
         if approval_timeout_s <= 0:
             raise ValueError("approval timeout must be positive")
         if enable_motion and motion is None:
@@ -180,6 +194,8 @@ class GuardedConversation:
         self.max_motion_context_age_s = max_motion_context_age_s
         self.ledger = ledger
         self.guard_timeout_s = guard_timeout_s
+        self.planner_timeout_s = planner_timeout_s
+        self.synthesis_timeout_s = synthesis_timeout_s
         self.approval_timeout_s = approval_timeout_s
         self.require_inbound_route = require_inbound_route
         self._turn_lock = asyncio.Lock()
@@ -279,11 +295,28 @@ class GuardedConversation:
                 if route.fast_command != "none":
                     return TurnResult("held", reason="conflicting_route")
             try:
-                proposals = await self.planner.plan(transcript)
+                proposals = await asyncio.wait_for(self.planner.plan(transcript), self.planner_timeout_s)
             except Exception:
                 return TurnResult("held", reason="planner_unavailable")
             if generation != self._generation:
                 return TurnResult("interrupted")
+            # The concrete local planner already caps proposals, but this
+            # boundary must not trust a replacement adapter to do so. Reject
+            # the whole batch before delivering any earlier valid item.
+            try:
+                if (
+                    not isinstance(proposals, Sequence)
+                    or isinstance(proposals, (str, bytes, bytearray))
+                    or len(proposals) > MAX_PROPOSALS
+                ):
+                    raise ValueError("invalid planner batch")
+                proposals = tuple(proposals)
+                if len(proposals) > MAX_PROPOSALS or any(
+                    not isinstance(item, (Speech, ToolCall, Motion)) for item in proposals
+                ):
+                    raise ValueError("invalid planner item")
+            except Exception:
+                return TurnResult("held", reason="invalid_proposals")
             delivered = 0
             for proposal in proposals:
                 result = await self._emit(proposal, generation, transcript)
@@ -367,7 +400,9 @@ class GuardedConversation:
             return TurnResult(verdict.kind, reason=verdict.reason)
         if isinstance(proposal, Speech):
             try:
-                audio = await self.synthesizer.synthesize(proposal.text)
+                audio = await asyncio.wait_for(
+                    self.synthesizer.synthesize(proposal.text), self.synthesis_timeout_s
+                )
             except Exception:
                 return TurnResult("held", reason="synthesis_unavailable")
             if generation != self._generation:
