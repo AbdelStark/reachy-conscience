@@ -19,6 +19,12 @@ class Action:
     tool: str | None = None
     motion_class: str | None = None
     untrusted_text: str | None = None
+    text: str | None = None
+    user_request: str | None = None
+    audience: Mapping[str, bool] | None = None
+    nearest_person_distance: str | None = None
+    battery: str | None = None
+    motor_temperature: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in ("utterance", "tool_call", "motion", "inbound"):
@@ -71,6 +77,16 @@ def _p(answers: Mapping[str, Judgment], key: str) -> float | None:
     return number if 0 <= number <= 1 else None
 
 
+def _severity(value: Judgment | None) -> float | None:
+    labels = {"none": 0.0, "minor": 1.0, "moderate": 2.0, "serious": 3.0, "severe": 4.0}
+    if isinstance(value, str):
+        return labels.get(value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if 0 <= number <= 4 else None
+
+
 def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy) -> Verdict:
     """Missing/invalid answers always hold; no action is executed by this function."""
     if action.kind == "tool_call" and action.tool in policy.confirm_before:
@@ -86,8 +102,8 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
     required.extend(required_by_kind[action.kind])
     if any(_p(answers, key) is None for key in required):
         return Verdict("hold", "missing_or_invalid_judgment")
-    severity = answers.get("severity")
-    if severity not in ("none", "minor", "moderate", "serious", "severe"):
+    severity = _severity(answers.get("severity"))
+    if severity is None:
         return Verdict("hold", "missing_or_invalid_severity")
 
     if action.kind == "inbound" and _p(answers, "injection") > policy.block_threshold:  # type: ignore[operator]
@@ -118,9 +134,7 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
         if p is not None and p >= policy.hold_floor:
             return Verdict("hold", f"uncertain_rule_{i}")
     if (
-        action.kind == "tool_call"
-        and severity in ("moderate", "serious", "severe")
-        and _p(answers, "irreversible") > 0.5  # type: ignore[operator]
+        action.kind == "tool_call" and severity >= 2 and _p(answers, "irreversible") > 0.5  # type: ignore[operator]
     ):
         return Verdict("hold", "irreversible_tool")
     if action.kind == "inbound" and _p(answers, "asks_to_change_rules") >= policy.hold_floor:  # type: ignore[operator]
