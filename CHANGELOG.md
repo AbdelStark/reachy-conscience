@@ -7,3 +7,4 @@
 - Keep effectful tools and motion disabled by default pending trusted adapters and hardware validation.
 - Test pre-output ordering, failure paths, stop interruption, wheel contents, and isolated wheel import.
 - Add an offline ordering example and citation metadata.
+- Add a bounded, opt-in Reachy Mini 1.10 media adapter with fake-backend tests; no robot validation yet.

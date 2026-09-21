@@ -1950,12 +1950,16 @@ jev = [
     { name = "typesafe-sdk" },
 ]
 robot = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "reachy-mini" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "build" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -1963,7 +1967,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "reachy-mini", marker = "extra == 'robot'", specifier = ">=1.10.0" },
+    { name = "numpy", marker = "extra == 'robot'", specifier = ">=2,<3" },
+    { name = "reachy-mini", marker = "extra == 'robot'", specifier = "==1.10.0" },
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
 ]
 provides-extras = ["jev", "robot"]
@@ -1971,6 +1976,7 @@ provides-extras = ["jev", "robot"]
 [package.metadata.requires-dev]
 dev = [
     { name = "build", specifier = ">=1.2" },
+    { name = "numpy", specifier = ">=2,<3" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=1.0" },
     { name = "ruff", specifier = ">=0.13" },

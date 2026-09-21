@@ -5,6 +5,7 @@ from .hold import HoldRegistry
 from .jev import action_state, ask_typesafe, guard_questions, guard_typesafe
 from .ledger import Ledger
 from .pipeline import GuardedConversation, Motion, Speech, ToolCall, TurnResult
+from .reachy_audio import AudioChunk, ReachyMediaAudio
 
 __all__ = [
     "Action",
@@ -25,4 +26,6 @@ __all__ = [
     "ToolCall",
     "Motion",
     "TurnResult",
+    "AudioChunk",
+    "ReachyMediaAudio",
 ]
