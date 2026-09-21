@@ -15,6 +15,7 @@ from .ingress import EnergySegmenter, OwnedAudioIngress
 from .jev import AsyncTypeSafeGuard, action_state, ask_typesafe, guard_questions, guard_typesafe
 from .ledger import Ledger
 from .local_asr import FasterWhisperTranscriber
+from .local_notes import LocalNotesTool
 from .local_tts import EspeakFfmpegSynthesizer
 from .owner_approval import ApprovalRequest, OwnerApprovalBroker
 from .owner_console import OwnerConsole
@@ -38,6 +39,7 @@ __all__ = [
     "EnergySegmenter",
     "OwnedAudioIngress",
     "FasterWhisperTranscriber",
+    "LocalNotesTool",
     "EspeakFfmpegSynthesizer",
     "OwnerConsole",
     "ApprovalRequest",
