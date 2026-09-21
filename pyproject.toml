@@ -16,6 +16,7 @@ dependencies = []
 
 [project.scripts]
 conscience-owner-console = "reachy_conscience.owner_console_cli:main"
+conscience-voice = "reachy_conscience.voice_host:main"
 
 [project.optional-dependencies]
 jev = ["typesafe-sdk>=0.7.0"]

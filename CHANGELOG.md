@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an explicitly operator-paced `conscience-voice` host that composes owned capture, local ASR/planner, Jev guard, offline TTS, SDK audio, policy console, and ledger. Tools/motion remain disabled, with no automatic next listen or hardware claim.
 - Request an owned playback queue flush before a later microphone capture; a stop racing with that flush cannot reopen capture. The SDK still provides no playback-complete acknowledgement.
 - Add an opt-in, fixed-destination local-note tool as a real effectful sink, with exact-argument broker integration tests for approval, denial, hard stop, and private-file checks; no robot or external service is involved.
 - Request a pinned-SDK `clear_player()` queue flush before playback stop, fail closed when the flush API is missing, and test flush failure/stop ordering without a robot.
