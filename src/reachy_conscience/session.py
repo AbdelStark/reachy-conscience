@@ -20,6 +20,7 @@ class Ingress(Protocol):
 
 class Playback(Protocol):
     async def arm_playback(self) -> None: ...
+    async def halt_audio(self) -> None: ...
 
 
 class OwnedVoiceSession:
@@ -27,8 +28,10 @@ class OwnedVoiceSession:
 
     Capture stops before transcription returns. Playback is armed only after a
     non-stop final transcript, and GuardedConversation still owns every output
-    decision. ``stop`` is terminal for this session; construct a new instance
-    to resume after an operator has checked the robot.
+    decision. A later run clears the previous owned audio queue before capture;
+    the caller must pace turns because queue clearance is not an acknowledged
+    playback-complete signal. ``stop`` is terminal for this session; construct
+    a new instance to resume after an operator has checked the robot.
     """
 
     def __init__(self, ingress: Ingress, conversation: GuardedConversation, playback: Playback) -> None:
@@ -40,11 +43,22 @@ class OwnedVoiceSession:
         self._capture_task: asyncio.Task[str | None] | None = None
         self._stopped = False
         self._arming = False
+        self._playback_armed = False
 
     async def run_once(self, *, listen_timeout_s: float = 30.0) -> TurnResult:
         async with self._turn_lock:
             if self._stopped:
                 return TurnResult("stopped")
+            if self._playback_armed:
+                # A completed enqueue is not a playback-complete receipt. Clear
+                # the previous owned queue before reopening the microphone.
+                try:
+                    await self.playback.halt_audio()
+                except Exception:
+                    return TurnResult("held", reason="playback_unavailable")
+                self._playback_armed = False
+                if self._stopped:
+                    return TurnResult("interrupted")
             capture = asyncio.create_task(self.ingress.listen_once(timeout_s=listen_timeout_s))
             self._capture_task = capture
             try:
@@ -70,6 +84,7 @@ class OwnedVoiceSession:
                 try:
                     self._arming = True
                     await self.playback.arm_playback()
+                    self._playback_armed = True
                 except Exception:
                     return TurnResult("held", reason="playback_unavailable")
                 finally:

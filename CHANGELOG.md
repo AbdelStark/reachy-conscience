@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Request an owned playback queue flush before a later microphone capture; a stop racing with that flush cannot reopen capture. The SDK still provides no playback-complete acknowledgement.
 - Add an opt-in, fixed-destination local-note tool as a real effectful sink, with exact-argument broker integration tests for approval, denial, hard stop, and private-file checks; no robot or external service is involved.
 - Request a pinned-SDK `clear_player()` queue flush before playback stop, fail closed when the flush API is missing, and test flush failure/stop ordering without a robot.
 - Install the newly built wheel into a fresh isolated CI environment before its import smoke, avoiding reuse of an older same-version wheel cache.

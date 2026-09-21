@@ -25,6 +25,10 @@ class Ports:
         self.arm_release = asyncio.Event()
         self.wait_capture = False
         self.wait_arm = False
+        self.wait_halt = False
+        self.fail_halt = False
+        self.halt_started = asyncio.Event()
+        self.halt_release = asyncio.Event()
 
     async def listen_once(self, *, timeout_s):
         self.events.append("capture_start")
@@ -42,6 +46,14 @@ class Ports:
         self.arm_started.set()
         if self.wait_arm:
             await self.arm_release.wait()
+
+    async def halt_audio(self):
+        self.events.append("halt")
+        self.halt_started.set()
+        if self.wait_halt:
+            await self.halt_release.wait()
+        if self.fail_halt:
+            raise OSError("queue flush unavailable")
 
     async def plan(self, _transcript):
         self.events.append("plan")
@@ -98,6 +110,48 @@ async def test_block_and_no_input_cannot_reach_output():
     result = await session(ports).run_once()
     assert result.status == "no_input"
     assert "arm" not in ports.events and "plan" not in ports.events
+
+
+@pytest.mark.asyncio
+async def test_next_capture_waits_for_previous_playback_queue_flush():
+    ports = Ports()
+    voice = session(ports)
+    assert (await voice.run_once()).status == "complete"
+    first_events = list(ports.events)
+    ports.wait_halt = True
+    second = asyncio.create_task(voice.run_once())
+    await ports.halt_started.wait()
+    assert ports.events == [*first_events, "halt"]
+    ports.halt_release.set()
+    assert (await second).status == "complete"
+    assert ports.events[len(first_events) : len(first_events) + 2] == ["halt", "capture_start"]
+
+
+@pytest.mark.asyncio
+async def test_stop_during_next_turn_flush_never_reopens_microphone():
+    ports = Ports()
+    voice = session(ports)
+    assert (await voice.run_once()).status == "complete"
+    ports.wait_halt = True
+    second = asyncio.create_task(voice.run_once())
+    await ports.halt_started.wait()
+    capture_count = ports.events.count("capture_start")
+    assert (await voice.stop()).status == "stopped"
+    ports.halt_release.set()
+    assert (await second).status == "interrupted"
+    assert ports.events.count("capture_start") == capture_count
+
+
+@pytest.mark.asyncio
+async def test_failed_previous_playback_flush_holds_without_capture():
+    ports = Ports()
+    voice = session(ports)
+    assert (await voice.run_once()).status == "complete"
+    ports.fail_halt = True
+    capture_count = ports.events.count("capture_start")
+    result = await voice.run_once()
+    assert (result.status, result.reason) == ("held", "playback_unavailable")
+    assert ports.events.count("capture_start") == capture_count
 
 
 @pytest.mark.asyncio
