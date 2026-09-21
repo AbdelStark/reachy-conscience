@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import http.client
 import json
 import stat
@@ -9,7 +10,15 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from reachy_conscience import Action, GuardAssessment, Ledger, OwnerConsole, PolicyStore, Verdict
+from reachy_conscience import (
+    Action,
+    GuardAssessment,
+    Ledger,
+    OwnerApprovalBroker,
+    OwnerConsole,
+    PolicyStore,
+    Verdict,
+)
 from reachy_conscience.owner_console_cli import _private_directory, main
 
 TOKEN = "synthetic-owner-token-0123456789abcdef"
@@ -172,3 +181,62 @@ def test_cli_help_and_private_state_directory_gate(tmp_path, capsys):
     link.symlink_to(state, target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
         _private_directory(link)
+
+
+@pytest.mark.asyncio
+async def test_authenticated_exact_approval_http_path_and_console_shutdown(tmp_path):
+    broker = OwnerApprovalBroker()
+    store = PolicyStore(tmp_path / "policy.json")
+    with OwnerConsole(store, tmp_path / "ledger.db", token=TOKEN, approval_broker=broker) as console:
+        assert json.loads(call(console, "GET", "/api/policy")[2])["approval_available"] is True
+        turn = asyncio.create_task(broker.authorize("send_message", '{"to":"Sam"}'))
+        await asyncio.sleep(0)
+        status, _, raw = await asyncio.to_thread(call, console, "GET", "/api/approval")
+        assert status == 200
+        request = json.loads(raw)["pending"]
+        assert request["tool"] == "send_message" and request["arguments_json"] == '{"to":"Sam"}'
+        assert (await asyncio.to_thread(call, console, "GET", "/api/approval", token=None))[0] == 401
+        decision = {
+            "request_id": request["request_id"],
+            "digest": "0" * 64,
+            "approve": True,
+        }
+        assert (await asyncio.to_thread(call, console, "POST", "/api/approval", body=decision))[0] == 409
+        decision["digest"] = request["digest"]
+        assert (
+            await asyncio.to_thread(
+                call,
+                console,
+                "POST",
+                "/api/approval",
+                body=decision,
+                headers={"Origin": "http://evil.example"},
+            )
+        )[0] == 403
+        assert (await asyncio.to_thread(call, console, "POST", "/api/approval", body=decision))[0] == 200
+        assert await turn is True
+        assert (await asyncio.to_thread(call, console, "POST", "/api/approval", body=decision))[0] == 409
+
+        denied = asyncio.create_task(broker.authorize("send_message", '{"to":"Sam"}'))
+        await asyncio.sleep(0)
+        denial_request = json.loads((await asyncio.to_thread(call, console, "GET", "/api/approval"))[2])[
+            "pending"
+        ]
+        denial = {
+            "request_id": denial_request["request_id"],
+            "digest": denial_request["digest"],
+            "approve": False,
+        }
+        assert (
+            await asyncio.to_thread(
+                call, console, "POST", "/api/approval", body={**denial, "approve": "false"}
+            )
+        )[0] == 400
+        assert (await asyncio.to_thread(call, console, "POST", "/api/approval", body=denial))[0] == 200
+        assert await denied is False
+
+        waiting = asyncio.create_task(broker.authorize("send_message", '{"to":"Sam"}'))
+        await asyncio.sleep(0)
+        assert broker.pending() is not None
+    assert await waiting is False
+    assert broker.pending() is None

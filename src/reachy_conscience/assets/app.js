@@ -2,6 +2,8 @@
 
 let ownerToken = "";
 let registeredTools = [];
+let approvalAvailable = false;
+let pendingApproval = null;
 const byId = (id) => document.getElementById(id);
 
 function status(message, failed = false) {
@@ -55,6 +57,29 @@ function renderPolicy(policy) {
   registeredTools = policy.registered_tools;
   renderTools(policy.confirm_before);
   byId("preview").disabled = !policy.preview_available;
+  approvalAvailable = policy.approval_available;
+  byId("approval-section").hidden = !approvalAvailable;
+}
+
+function renderApproval(request) {
+  if (request?.request_id !== pendingApproval?.request_id) {
+    byId("approval-confirm-name").value = "";
+  }
+  pendingApproval = request;
+  byId("approval-empty").hidden = request !== null;
+  byId("approval-request").hidden = request === null;
+  if (request === null) return;
+  byId("approval-tool").textContent = request.tool;
+  byId("approval-arguments").textContent = request.arguments_json;
+  byId("approval-digest").textContent = request.digest;
+  byId("approval-seconds").textContent = Math.max(0, Math.ceil(request.remaining_s));
+  byId("approve-action").disabled = byId("approval-confirm-name").value !== request.tool;
+}
+
+async function loadApproval() {
+  if (!approvalAvailable || !ownerToken) return;
+  const response = await request("/api/approval");
+  renderApproval((await response.json()).pending);
 }
 
 async function loadPolicy() {
@@ -92,6 +117,7 @@ async function connect() {
   byId("token").value = "";
   try {
     await Promise.all([loadPolicy(), loadLedger()]);
+    await loadApproval();
     byId("workspace").hidden = false;
     byId("connect").disabled = true;
     byId("token").disabled = true;
@@ -107,12 +133,32 @@ async function connect() {
 function disconnect() {
   ownerToken = "";
   registeredTools = [];
+  approvalAvailable = false;
+  pendingApproval = null;
   byId("workspace").hidden = true;
   byId("connect").disabled = false;
   byId("token").disabled = false;
   byId("disconnect").disabled = true;
   byId("preview-results").replaceChildren();
   status("Token forgotten. Reloading also forgets it.");
+}
+
+async function decideApproval(approve) {
+  if (!pendingApproval) return;
+  const { request_id, digest, tool } = pendingApproval;
+  if (approve && byId("approval-confirm-name").value !== tool) return;
+  if (approve && !window.confirm(`Approve ${tool} with exactly the JSON arguments shown?`)) return;
+  try {
+    await request("/api/approval", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id, digest, approve }),
+    });
+    renderApproval(null);
+    status(approve ? "Approval recorded; execution is not confirmed." : "Action denied.");
+  } catch (error) {
+    await loadApproval();
+    status(error.message, true);
+  }
 }
 
 async function save() {
@@ -172,3 +218,9 @@ byId("refresh").addEventListener("click", async () => {
   try { await loadLedger(); status("Ledger refreshed."); } catch (error) { status(error.message, true); }
 });
 byId("export").addEventListener("click", exportLedger);
+byId("approval-confirm-name").addEventListener("input", () => {
+  byId("approve-action").disabled = !pendingApproval || byId("approval-confirm-name").value !== pendingApproval.tool;
+});
+byId("approve-action").addEventListener("click", () => decideApproval(true));
+byId("deny-action").addEventListener("click", () => decideApproval(false));
+setInterval(() => { if (ownerToken && approvalAvailable) loadApproval().catch(() => status("Approval channel unavailable.", true)); }, 1000);

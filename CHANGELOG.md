@@ -4,7 +4,8 @@
 
 - Request a pinned-SDK `clear_player()` queue flush before playback stop, fail closed when the flush API is missing, and test flush failure/stop ordering without a robot.
 - Install the newly built wheel into a fresh isolated CI environment before its import smoke, avoiding reuse of an older same-version wheel cache.
-- Add a loopback-only, bearer-authenticated owner policy and ledger console with a static browser shell, atomic policy writes, summary-free export, and an explicitly enabled, dispatch-free five-case preview; no robot connection or effectful approval is exposed.
+- Add a loopback-only, bearer-authenticated owner policy and ledger console with a static browser shell, atomic policy writes, summary-free export, and an explicitly enabled, dispatch-free five-case preview; the standalone command connects to no robot or effectful tool.
+- Add a one-shot owner-approval broker and authenticated browser review for exact tool arguments, with expiry, replay rejection, console-shutdown cancellation, and hard-stop invalidation; still no effectful tool implementation or robot host.
 - Add an independently owned, non-streaming conversation pipeline with guards before speech synthesis/audio enqueue, tool dispatch, and motion dispatch.
 - Interrupt pending work on local hard stop; hold or block stops the rest of a turn.
 - Keep motion disabled by default; effectful tools require explicit registration and a separate owner-approval port for exact canonical arguments before dispatch.

@@ -178,6 +178,12 @@ class GuardedConversation:
         if is_hard_stop(transcript):
             # This path must not wait for a model, planner, TTS, or turn lock.
             self._generation += 1
+            cancel_pending = getattr(self.owner_approval, "cancel_all", None)
+            if callable(cancel_pending):
+                try:
+                    cancel_pending()
+                except Exception:
+                    pass  # A failed approval cancel must not suppress the output stop.
             await self.emergency_stop.stop()
             return TurnResult("stopped")
         async with self._turn_lock:

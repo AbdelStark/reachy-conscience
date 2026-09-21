@@ -28,6 +28,29 @@
     </section>
 
     <div id="workspace" hidden>
+      <section id="approval-section" class="card approval" aria-labelledby="approval-title" hidden>
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Action gate</span>
+            <h2 id="approval-title">Owner approval</h2>
+          </div>
+          <span class="badge">Manual decision</span>
+        </div>
+        <p id="approval-empty" class="hint">No effectful tool is waiting for approval.</p>
+        <div id="approval-request" hidden>
+          <p>Proposed tool: <strong id="approval-tool"></strong></p>
+          <label for="approval-arguments">Exact JSON arguments</label>
+          <pre id="approval-arguments" tabindex="0"></pre>
+          <p class="hint">Request digest: <code id="approval-digest"></code><br>Expires in <span id="approval-seconds"></span> seconds. Approval authorizes only this exact request; it does not prove the tool executed.</p>
+          <label for="approval-confirm-name">Type the tool name to enable approval</label>
+          <input id="approval-confirm-name" type="text" autocomplete="off" spellcheck="false">
+          <div class="row actions">
+            <button id="approve-action" type="button" disabled>Approve exact action</button>
+            <button id="deny-action" type="button" class="secondary">Deny</button>
+          </div>
+        </div>
+      </section>
+
       <section class="card" aria-labelledby="policy-title">
         <div class="section-head">
           <div>

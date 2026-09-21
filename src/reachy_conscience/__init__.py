@@ -16,6 +16,7 @@ from .jev import AsyncTypeSafeGuard, action_state, ask_typesafe, guard_questions
 from .ledger import Ledger
 from .local_asr import FasterWhisperTranscriber
 from .local_tts import EspeakFfmpegSynthesizer
+from .owner_approval import ApprovalRequest, OwnerApprovalBroker
 from .owner_console import OwnerConsole
 from .pipeline import GuardedConversation, Motion, OwnerApproval, Speech, ToolCall, TurnResult
 from .policy_store import PolicyStore, dry_run_policy, policy_from_lines, preview_cases
@@ -39,6 +40,8 @@ __all__ = [
     "FasterWhisperTranscriber",
     "EspeakFfmpegSynthesizer",
     "OwnerConsole",
+    "ApprovalRequest",
+    "OwnerApprovalBroker",
     "LocalOllamaPlanner",
     "decode_proposals",
     "Ledger",

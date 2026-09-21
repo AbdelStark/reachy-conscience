@@ -30,6 +30,10 @@ fieldset { border: 1px solid #334348; border-radius: 8px; margin: 1.2rem 0; }
 .tool-list label { font-weight: 400; }
 .thresholds { display: flex; gap: 1.5rem; flex-wrap: wrap; margin: 1.3rem 0; }
 .actions { margin-top: 1rem; }
+.approval { border-color: #608c78; }
+.approval pre { background: #10191d; border: 1px solid #496067; border-radius: 8px; padding: 1rem; overflow: auto; max-height: 16rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval code { overflow-wrap: anywhere; }
+.approval input[type="text"] { color: #edf3f1; background: #10191d; border: 1px solid #496067; border-radius: 8px; padding: .75rem; font: inherit; width: min(100%, 22rem); }
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 th, td { padding: .8rem .7rem; text-align: left; border-bottom: 1px solid #334348; white-space: nowrap; }

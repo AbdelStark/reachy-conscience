@@ -33,7 +33,7 @@ jobs:
       - run: |
           uv venv "$RUNNER_TEMP/conscience-wheel"
           uv pip install --python "$RUNNER_TEMP/conscience-wheel/bin/python" --no-cache dist/*.whl
-          "$RUNNER_TEMP/conscience-wheel/bin/python" -I -c 'from importlib.resources import files; from reachy_conscience import PolicyStore, Ledger, GuardAssessment, ReachyMediaAudio, OwnedVoiceSession, OwnerConsole; assert files("reachy_conscience").joinpath("assets", "index.html").is_file(); print("fresh wheel and console asset import ok")'
+          "$RUNNER_TEMP/conscience-wheel/bin/python" -I -c 'from importlib.resources import files; from reachy_conscience import PolicyStore, Ledger, GuardAssessment, ReachyMediaAudio, OwnedVoiceSession, OwnerConsole, OwnerApprovalBroker; assert files("reachy_conscience").joinpath("assets", "index.html").is_file(); print("fresh wheel, approval broker and console asset import ok")'
           "$RUNNER_TEMP/conscience-wheel/bin/conscience-owner-console" --help
 
   robot-api:

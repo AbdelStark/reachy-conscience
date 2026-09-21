@@ -1,7 +1,8 @@
 """Authenticated loopback owner console for policy, preview, and ledger.
 
 This control plane has no planner, robot, tool, motion, or audio output handle.
-It does not serve as an owner-approval adapter for effectful actions.
+An optional approval broker can resolve an exact pending tool request; it does
+not execute the tool and is absent from the standalone console command.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Any
 
 from .guard import GuardPolicy
 from .ledger import Ledger
+from .owner_approval import OwnerApprovalBroker
 from .pipeline import Guard
 from .policy_store import PolicyStore, dry_run_policy, policy_from_lines
 
@@ -40,7 +42,11 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _policy_payload(
-    policy: GuardPolicy, registered_tools: frozenset[str], *, preview_available: bool
+    policy: GuardPolicy,
+    registered_tools: frozenset[str],
+    *,
+    preview_available: bool,
+    approval_available: bool,
 ) -> dict[str, Any]:
     return {
         "rules": "\n".join(policy.rules),
@@ -49,6 +55,7 @@ def _policy_payload(
         "block_threshold": policy.block_threshold,
         "hold_floor": policy.hold_floor,
         "preview_available": preview_available,
+        "approval_available": approval_available,
     }
 
 
@@ -91,6 +98,7 @@ class OwnerConsole:
         ledger_path: str | Path,
         *,
         guard_factory: Callable[[GuardPolicy], Guard] | None = None,
+        approval_broker: OwnerApprovalBroker | None = None,
         token: str | None = None,
         port: int = 0,
     ) -> None:
@@ -104,6 +112,7 @@ class OwnerConsole:
         self.policy_store = policy_store
         self.ledger_path = Path(ledger_path)
         self.guard_factory = guard_factory
+        self.approval_broker = approval_broker
         self._preview_lock = threading.Lock()
         self._policy_lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -121,6 +130,8 @@ class OwnerConsole:
         self._thread.start()
 
     def close(self) -> None:
+        if self.approval_broker is not None:
+            self.approval_broker.cancel_all()
         if self._thread is not None:
             self._server.shutdown()
             self._thread.join(timeout=5)
@@ -219,7 +230,27 @@ class OwnerConsole:
                                 policy,
                                 console.policy_store.registered_tools,
                                 preview_available=console.guard_factory is not None,
+                                approval_available=console.approval_broker is not None,
                             ),
+                        )
+                    elif self.path == "/api/approval":
+                        if console.approval_broker is None:
+                            self._error(503, "owner approval is not configured")
+                            return
+                        pending = console.approval_broker.pending()
+                        self._json(
+                            200,
+                            {
+                                "pending": None
+                                if pending is None
+                                else {
+                                    "request_id": pending.request_id,
+                                    "tool": pending.tool,
+                                    "arguments_json": pending.arguments_json,
+                                    "digest": pending.digest,
+                                    "remaining_s": pending.remaining_s,
+                                }
+                            },
                         )
                     elif self.path in {"/api/ledger", "/api/export"}:
                         ledger = Ledger(console.ledger_path)
@@ -246,7 +277,7 @@ class OwnerConsole:
                 if origin is not None and origin != console.url.rstrip("/"):
                     self._error(403, "invalid origin")
                     return
-                if self.path not in {"/api/policy", "/api/preview"}:
+                if self.path not in {"/api/policy", "/api/preview", "/api/approval"}:
                     self._error(404, "not found")
                     return
                 try:
@@ -261,8 +292,25 @@ class OwnerConsole:
                                 policy,
                                 console.policy_store.registered_tools,
                                 preview_available=console.guard_factory is not None,
+                                approval_available=console.approval_broker is not None,
                             ),
                         )
+                        return
+                    if self.path == "/api/approval":
+                        if console.approval_broker is None:
+                            self._error(503, "owner approval is not configured")
+                            return
+                        if not isinstance(body, dict) or set(body) != {"request_id", "digest", "approve"}:
+                            raise ValueError("invalid owner decision fields")
+                        if not isinstance(body["approve"], bool):
+                            raise ValueError("owner decision must be a boolean")
+                        accepted = console.approval_broker.decide(
+                            body["request_id"], body["digest"], approve=body["approve"]
+                        )
+                        if not accepted:
+                            self._error(409, "approval request is stale or mismatched")
+                            return
+                        self._json(200, {"accepted": True})
                         return
                     if console.guard_factory is None:
                         self._error(503, "live preview is not configured")
