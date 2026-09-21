@@ -144,6 +144,23 @@ def test_operator_sign_response_requires_a_separate_explicit_command(tmp_path):
     assert session.stops == 1
 
 
+def test_operator_ends_on_uncertain_output_error(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    session = FakeSession(guard, [TurnResult("output_error", reason="audio_sink_failed")])
+    prompts = []
+
+    def prompt(message):
+        prompts.append(message)
+        if len(prompts) > 1:
+            raise AssertionError("another capture prompt must not be shown")
+        return ""
+
+    operator_turns(session, store, guard, prompt=prompt, report=lambda _message: None)
+    assert len(session.seen_rules) == 1
+    assert session.stops == 1
+
+
 def test_sign_response_failure_requests_owned_stop_instead_of_another_turn(tmp_path):
     store = PolicyStore(tmp_path / "policy.json")
     guard = SimpleNamespace(policy=store.load())

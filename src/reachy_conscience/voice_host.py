@@ -112,7 +112,7 @@ def operator_turns(
             guard.policy = _effective_policy(policy_store.load(), required_confirmation)
             result = asyncio.run(session.run_once(listen_timeout_s=listen_timeout_s))
             report(f"Turn: {result.status}; guarded outputs: {result.delivered}.")
-            if result.status in {"stopped", "interrupted"}:
+            if result.status in {"stopped", "interrupted", "output_error"}:
                 break
     finally:
         asyncio.run(session.stop())
@@ -230,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
 
                 async def respond_to_one_sign() -> TurnResult:
                     assert sign_ingress is not None
-                    if playback.armed:
+                    if playback.armed or playback.needs_flush:
                         try:
                             await playback.halt_audio()
                         except Exception:

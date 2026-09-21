@@ -37,11 +37,17 @@ class OwnedPlaybackGate:
         self.backend = backend
         self._output_lock = asyncio.Lock()
         self._armed = False
+        self._needs_flush = False
         self._revoked = False
 
     @property
     def armed(self) -> bool:
         return self._armed
+
+    @property
+    def needs_flush(self) -> bool:
+        """A queue-clearance request must succeed before another capture."""
+        return self._needs_flush
 
     def revoke(self) -> None:
         self._revoked = True
@@ -50,6 +56,7 @@ class OwnedPlaybackGate:
         async with self._output_lock:
             if self._revoked:
                 raise RuntimeError("owned playback was stopped")
+            self._needs_flush = True
             try:
                 if not self._armed:
                     await self.backend.arm_playback()
@@ -62,21 +69,27 @@ class OwnedPlaybackGate:
             except BaseException:
                 # Arm or push may have partially changed the SDK queue.
                 self._armed = False
+                self._needs_flush = True
                 try:
                     await self.backend.halt_audio()
+                    self._needs_flush = False
                 except Exception:
-                    pass  # Keep the original failure; the gate stays disarmed.
+                    pass  # Keep the original failure; retry flush before capture.
                 raise
 
     async def halt_audio(self) -> None:
         self._armed = False
+        self._needs_flush = True
         try:
             await self.backend.halt_audio()
+            self._needs_flush = False
         finally:
             async with self._output_lock:
-                if self._armed:
+                if self._armed or self._needs_flush:
+                    self._needs_flush = True
                     try:
                         await self.backend.halt_audio()
+                        self._needs_flush = False
                     finally:
                         self._armed = False
 
@@ -108,7 +121,7 @@ class OwnedVoiceSession:
         async with self._turn_lock:
             if self._stopped:
                 return TurnResult("stopped")
-            if self.playback.armed:
+            if self.playback.armed or self.playback.needs_flush:
                 # A completed enqueue is not a playback-complete receipt. Clear
                 # the previous owned queue before reopening the microphone.
                 try:

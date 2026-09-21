@@ -222,7 +222,28 @@ async def test_failed_previous_playback_flush_holds_without_capture():
     capture_count = ports.events.count("capture_start")
     result = await voice.run_once()
     assert (result.status, result.reason) == ("held", "playback_unavailable")
+    assert voice.playback.needs_flush is True
     assert ports.events.count("capture_start") == capture_count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["arm", "enqueue"])
+async def test_failed_cleanup_after_partial_output_blocks_new_capture_until_flush_succeeds(failure):
+    ports = Ports()
+    setattr(ports, f"fail_{failure}", True)
+    ports.fail_halt = True
+    voice = session(ports)
+    assert (await voice.run_once()).status == "output_error"
+    assert voice.playback.armed is False
+    assert voice.playback.needs_flush is True
+    capture_count = ports.events.count("capture_start")
+    result = await voice.run_once()
+    assert (result.status, result.reason) == ("held", "playback_unavailable")
+    assert ports.events.count("capture_start") == capture_count
+    ports.fail_halt = False
+    setattr(ports, f"fail_{failure}", False)
+    assert (await voice.run_once()).status == "complete"
+    assert ports.events.count("capture_start") == capture_count + 1
 
 
 @pytest.mark.asyncio
