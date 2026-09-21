@@ -122,7 +122,7 @@ async function loadLedger(version = sessionVersion) {
     const route = row.route_choice
       ? `${row.route_choice} (${Math.round(row.route_confidence * 100)}%)${row.route_choice === "fast_path" ? ` · ${row.fast_command}` : ""}`
       : "—";
-    const kind = row.source === "camera_sign" ? "camera sign" : row.kind;
+    const kind = row.source === "camera_sign" ? `camera sign · ${row.kind}` : row.kind;
     for (const value of [new Date(row.t * 1000).toLocaleString(), kind, row.verdict, route, row.reason, `${row.latency_ms.toFixed(1)} ms`]) {
       const td = document.createElement("td");
       td.textContent = value;

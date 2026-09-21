@@ -42,8 +42,16 @@ class Action:
             raise ValueError("tool_call requires tool")
         if self.kind == "motion" and not self.motion_class:
             raise ValueError("motion requires motion_class")
-        if self.source is not None and (self.kind != "inbound" or self.source != "camera_sign"):
-            raise ValueError("invalid inbound source")
+        if self.source is not None and (
+            self.kind not in {"inbound", "utterance"} or self.source != "camera_sign"
+        ):
+            raise ValueError("invalid action source")
+        if self.source == "camera_sign" and (
+            not isinstance(self.untrusted_text, str)
+            or not self.untrusted_text.strip()
+            or len(self.untrusted_text) > 2000
+        ):
+            raise ValueError("camera sign requires bounded untrusted text")
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +176,8 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
         "inbound": ["injection", "asks_to_change_rules"],
     }
     required.extend(required_by_kind[action.kind])
+    if action.kind == "utterance" and action.source == "camera_sign":
+        required.append("follows_sign_instruction")
     if any(_p(answers, key) is None for key in required):
         return Verdict("hold", "missing_or_invalid_judgment")
     severity = _severity(answers.get("severity"))
@@ -182,6 +192,12 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
             return Verdict("block", f"rule_{i}")
 
     if action.kind == "utterance":
+        if action.source == "camera_sign":
+            p_sign = _p(answers, "follows_sign_instruction")
+            if p_sign is not None and p_sign > policy.block_threshold:
+                return Verdict("block", "sign_instruction_followed")
+            if p_sign is not None and p_sign >= policy.hold_floor:
+                return Verdict("hold", "uncertain_sign_instruction")
         if _p(answers, "discloses_private_info") > policy.block_threshold:  # type: ignore[operator]
             return Verdict("block", "private_info")
         if _p(answers, "appropriate_for_audience") < policy.hold_floor:  # type: ignore[operator]

@@ -128,6 +128,44 @@ async def test_local_tesseract_recognizes_synthetic_jpeg_without_network():
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=90)
     jpeg = buffer.getvalue()
-    assert await LocalTesseractOcr().extract_text(jpeg) == "STOP"
+    extracted = await LocalTesseractOcr().extract_text(jpeg)
+    assert extracted == "STOP"
     with pytest.raises(ValueError, match="invalid camera JPEG"):
         await LocalTesseractOcr().extract_text(b"not an image")
+
+    events = []
+
+    class Ports:
+        async def plan_sign(self, text):
+            events.append(("plan_sign", text))
+            return [Speech("I will obey the sign")]
+
+        async def synthesize(self, _text):
+            events.append("synthesize")
+            return b"audio"
+
+        async def enqueue(self, _audio):
+            events.append("enqueue")
+
+        async def stop(self):
+            events.append("stop")
+
+    async def guard(action):
+        events.append(("guard", action.kind, action.source, action.untrusted_text))
+        return Verdict("approve" if action.kind == "inbound" else "block", "fixture")
+
+    ports = Ports()
+    app = GuardedConversation(
+        planner=ports,
+        guard=guard,
+        synthesizer=ports,
+        audio=ports,
+        emergency_stop=ports,
+    )
+    result = await app.respond_to_sign(extracted)
+    assert result.status == "block"
+    assert events == [
+        ("guard", "inbound", "camera_sign", "STOP"),
+        ("plan_sign", "STOP"),
+        ("guard", "utterance", "camera_sign", "STOP"),
+    ]

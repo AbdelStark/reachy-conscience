@@ -127,7 +127,7 @@ test("camera-sign ledger rows show only a source label, not OCR text", async () 
   byId("token").value = "test-owner-token";
   await context.connect();
   const row = byId("ledger-rows").children[0];
-  assert.equal(row.children[1].textContent, "camera sign");
+  assert.equal(row.children[1].textContent, "camera sign · inbound");
   assert.equal(row.children[2].textContent, "block");
   assert.equal(row.children.length, 6);
   assert.equal(byId("workspace").hidden, false);

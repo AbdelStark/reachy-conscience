@@ -295,35 +295,52 @@ class GuardedConversation:
                 if route.fast_command != "none":
                     return TurnResult("held", reason="conflicting_route")
             try:
-                proposals = await asyncio.wait_for(self.planner.plan(transcript), self.planner_timeout_s)
+                pending = self.planner.plan(transcript)
             except Exception:
                 return TurnResult("held", reason="planner_unavailable")
-            if generation != self._generation:
-                return TurnResult("interrupted")
-            # The concrete local planner already caps proposals, but this
-            # boundary must not trust a replacement adapter to do so. Reject
-            # the whole batch before delivering any earlier valid item.
-            try:
-                if (
-                    not isinstance(proposals, Sequence)
-                    or isinstance(proposals, (str, bytes, bytearray))
-                    or len(proposals) > MAX_PROPOSALS
-                ):
-                    raise ValueError("invalid planner batch")
-                proposals = tuple(proposals)
-                if len(proposals) > MAX_PROPOSALS or any(
-                    not isinstance(item, (Speech, ToolCall, Motion)) for item in proposals
-                ):
-                    raise ValueError("invalid planner item")
-            except Exception:
-                return TurnResult("held", reason="invalid_proposals")
-            delivered = 0
-            for proposal in proposals:
-                result = await self._emit(proposal, generation, transcript)
-                if result.status != "delivered":
-                    return TurnResult(result.status, delivered, result.reason)
-                delivered += 1
-            return TurnResult("complete", delivered)
+            return await self._plan_and_emit(pending, generation, transcript)
+
+    async def _plan_and_emit(
+        self,
+        pending: Awaitable[Sequence[Proposal]],
+        generation: int,
+        request_text: str,
+        *,
+        sign_mode: bool = False,
+    ) -> TurnResult:
+        try:
+            proposals = await asyncio.wait_for(pending, self.planner_timeout_s)
+        except Exception:
+            return TurnResult("held", reason="planner_unavailable")
+        if generation != self._generation:
+            return TurnResult("interrupted")
+        # The concrete local planner already caps proposals, but this
+        # boundary must not trust a replacement adapter to do so. Reject
+        # the whole batch before delivering any earlier valid item.
+        try:
+            if (
+                not isinstance(proposals, Sequence)
+                or isinstance(proposals, (str, bytes, bytearray))
+                or len(proposals) > (1 if sign_mode else MAX_PROPOSALS)
+            ):
+                raise ValueError("invalid planner batch")
+            proposals = tuple(proposals)
+            if len(proposals) > (1 if sign_mode else MAX_PROPOSALS) or any(
+                not isinstance(item, Speech if sign_mode else (Speech, ToolCall, Motion))
+                for item in proposals
+            ):
+                raise ValueError("invalid planner item")
+        except Exception:
+            return TurnResult("held", reason="invalid_proposals")
+        delivered = 0
+        for proposal in proposals:
+            result = await self._emit(
+                proposal, generation, request_text, sign_text=request_text if sign_mode else None
+            )
+            if result.status != "delivered":
+                return TurnResult(result.status, delivered, result.reason)
+            delivered += 1
+        return TurnResult("complete", delivered)
 
     async def screen_sign(self, text: str) -> TurnResult:
         """Judge one OCR result as untrusted camera text, without planning or output.
@@ -341,7 +358,34 @@ class GuardedConversation:
                 return TurnResult("interrupted")
             return TurnResult(assessment.verdict.kind, reason=assessment.verdict.reason)
 
-    async def _emit(self, proposal: Proposal, generation: int, transcript: str) -> TurnResult:
+    async def respond_to_sign(self, text: str) -> TurnResult:
+        """Optionally respond to one sign after inbound and output guards.
+
+        The sign cannot invoke fast commands, tools, or motion. Only a
+        proposal-only planner with a dedicated ``plan_sign`` method is used.
+        """
+        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+            return TurnResult("rejected", reason="invalid_sign_text")
+        async with self._turn_lock:
+            generation = self._generation
+            inbound = Action(kind="inbound", summary="camera sign", untrusted_text=text, source="camera_sign")
+            assessment = await self._judge(inbound)
+            if generation != self._generation:
+                return TurnResult("interrupted")
+            if assessment.verdict.kind != "approve":
+                return TurnResult(assessment.verdict.kind, reason=assessment.verdict.reason)
+            plan_sign = getattr(self.planner, "plan_sign", None)
+            if not callable(plan_sign):
+                return TurnResult("held", reason="sign_planner_unavailable")
+            try:
+                pending = plan_sign(text)
+            except Exception:
+                return TurnResult("held", reason="planner_unavailable")
+            return await self._plan_and_emit(pending, generation, text, sign_mode=True)
+
+    async def _emit(
+        self, proposal: Proposal, generation: int, transcript: str, *, sign_text: str | None = None
+    ) -> TurnResult:
         if generation != self._generation:
             return TurnResult("interrupted")
         tool_arguments_json: str | None = None
@@ -355,7 +399,13 @@ class GuardedConversation:
                     or len(proposal.text) > 2000
                 ):
                     return TurnResult("held", reason="invalid_speech")
-                action = Action(kind="utterance", summary="speech proposal", text=proposal.text)
+                action = Action(
+                    kind="utterance",
+                    summary="speech proposal",
+                    text=proposal.text,
+                    untrusted_text=sign_text,
+                    source="camera_sign" if sign_text is not None else None,
+                )
             elif isinstance(proposal, ToolCall):
                 if (
                     not isinstance(proposal.name, str)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from types import SimpleNamespace
 
@@ -107,6 +108,73 @@ def test_operator_scans_sign_without_opening_microphone_or_dispatching_output(tm
     assert reports == ["Sign: block; no output dispatched."]
 
 
+def test_operator_sign_response_requires_a_separate_explicit_command(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    session = FakeSession(guard)
+    calls = []
+    reports = []
+
+    class Sign:
+        async def read_once(self):
+            calls.append("inspect")
+            return None
+
+    async def inspect(_text):
+        raise AssertionError("guard-only inspection was not requested")
+
+    async def respond():
+        calls.append("respond")
+        return TurnResult("complete", 1)
+
+    commands = iter(["r", "q"])
+    operator_turns(
+        session,
+        store,
+        guard,
+        prompt=lambda _message: next(commands),
+        report=reports.append,
+        sign_ingress=Sign(),
+        screen_sign=inspect,
+        sign_responder=respond,
+    )
+    assert calls == ["respond"]
+    assert session.seen_rules == []
+    assert reports == ["Sign response: complete; guarded outputs: 1."]
+    assert session.stops == 1
+
+
+def test_sign_response_failure_requests_owned_stop_instead_of_another_turn(tmp_path):
+    store = PolicyStore(tmp_path / "policy.json")
+    guard = SimpleNamespace(policy=store.load())
+    session = FakeSession(guard)
+    reports = []
+
+    class Sign:
+        async def read_once(self):
+            return None
+
+    async def inspect(_text):
+        raise AssertionError("inspection was not requested")
+
+    async def fail():
+        raise RuntimeError("output may be partial")
+
+    operator_turns(
+        session,
+        store,
+        guard,
+        prompt=lambda _message: "r",
+        report=reports.append,
+        sign_ingress=Sign(),
+        screen_sign=inspect,
+        sign_responder=fail,
+    )
+    assert session.stops == 1
+    assert session.seen_rules == []
+    assert reports == ["Sign response failed; requesting owned stop. Output may already have started."]
+
+
 @pytest.mark.parametrize("exit_mode", ["eof", "stop", "exception"])
 def test_operator_always_stops_owned_output(tmp_path, exit_mode):
     store = PolicyStore(tmp_path / "policy.json")
@@ -151,14 +219,25 @@ def test_cli_help_and_hardware_gate_do_not_import_robot_or_start_capture(tmp_pat
     assert gated.value.code == 2
     assert "acknowledge-experimental-hardware" in capsys.readouterr().err
     assert not (tmp_path / "state").exists()
+    with pytest.raises(SystemExit) as missing_camera:
+        main([*base, "--acknowledge-experimental-hardware", "--enable-camera-sign-responses"])
+    assert missing_camera.value.code == 2
+    assert "require --enable-camera-signs" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
-    ("enable_notes", "enable_signs"),
-    [(False, False), (True, False), (False, True), (True, True)],
+    ("enable_notes", "enable_signs", "enable_responses"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+        (False, True, True),
+        (True, True, True),
+    ],
 )
 def test_cli_composes_guarded_owned_ports_without_running_a_turn(
-    tmp_path, monkeypatch, enable_notes, enable_signs
+    tmp_path, monkeypatch, enable_notes, enable_signs, enable_responses
 ):
     if enable_signs:
         pytest.importorskip("PIL")
@@ -210,8 +289,12 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
         assert conversation.enable_motion is False
         assert (_options["sign_ingress"] is not None) == enable_signs
         assert (_options["screen_sign"] is not None) == enable_signs
+        assert (_options["sign_responder"] is not None) == enable_responses
         if enable_signs:
             assert _options["sign_ingress"].camera.media is session.ingress.capture.media
+        if enable_responses:
+            result = asyncio.run(_options["sign_responder"]())
+            assert result.status == "no_input"
         seen.append("owned_session_composed")
 
     class TrackingConsole(OwnerConsole):
@@ -251,6 +334,7 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(
                 "--acknowledge-experimental-hardware",
                 *(["--enable-local-notes"] if enable_notes else []),
                 *(["--enable-camera-signs"] if enable_signs else []),
+                *(["--enable-camera-sign-responses"] if enable_responses else []),
             ]
         )
         == 0

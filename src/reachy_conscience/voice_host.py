@@ -55,6 +55,7 @@ def operator_turns(
     required_confirmation: frozenset[str] = frozenset(),
     sign_ingress: SignIngress | None = None,
     screen_sign: Callable[[str], Awaitable[TurnResult]] | None = None,
+    sign_responder: Callable[[], Awaitable[TurnResult]] | None = None,
 ) -> None:
     """Reload policy only between turns; stop owned output on every exit.
 
@@ -66,11 +67,15 @@ def operator_turns(
         raise ValueError("listen timeout must be within 1..120 seconds")
     if (sign_ingress is None) != (screen_sign is None):
         raise ValueError("sign ingress and guard must be enabled together")
+    if sign_responder is not None and sign_ingress is None:
+        raise ValueError("sign responses require sign ingress")
     try:
         while True:
             try:
                 options = (
-                    "Enter: listen once; s: scan sign once; q: stop"
+                    "Enter: listen once; s: inspect sign; "
+                    + ("r: respond to sign; " if sign_responder else "")
+                    + "q: stop"
                     if sign_ingress
                     else "Enter: listen once; q: stop"
                 )
@@ -79,6 +84,17 @@ def operator_turns(
                 break
             if command.strip().lower() in {"q", "quit"}:
                 break
+            if command.strip().lower() == "r" and sign_responder is not None:
+                guard.policy = _effective_policy(policy_store.load(), required_confirmation)
+                try:
+                    result = asyncio.run(sign_responder())
+                except Exception:
+                    report("Sign response failed; requesting owned stop. Output may already have started.")
+                    break
+                report(f"Sign response: {result.status}; guarded outputs: {result.delivered}.")
+                if result.status in {"stopped", "interrupted", "output_error"}:
+                    break
+                continue
             if command.strip().lower() == "s" and sign_ingress is not None:
                 assert screen_sign is not None
                 guard.policy = _effective_policy(policy_store.load(), required_confirmation)
@@ -136,6 +152,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Opt in to one-frame local OCR and guard-only sign screening; no sign commands or output",
     )
     parser.add_argument(
+        "--enable-camera-sign-responses",
+        action="store_true",
+        help="Separately opt in to one guarded speech proposal from a scanned sign",
+    )
+    parser.add_argument(
         "--acknowledge-experimental-hardware",
         action="store_true",
         help="Required: no robot stop, playback, or voice quality validation exists",
@@ -143,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.acknowledge_experimental_hardware:
         parser.error("pass --acknowledge-experimental-hardware after reviewing the hardware limitations")
+    if args.enable_camera_sign_responses and not args.enable_camera_signs:
+        parser.error("camera-sign responses require --enable-camera-signs")
     if not sys.stdin.isatty():
         parser.error("interactive operator terminal required")
     if not 1 <= args.listen_timeout <= 120:
@@ -204,6 +227,19 @@ def main(argv: list[str] | None = None) -> int:
                     if args.enable_camera_signs
                     else None
                 )
+
+                async def respond_to_one_sign() -> TurnResult:
+                    assert sign_ingress is not None
+                    if playback.armed:
+                        try:
+                            await playback.halt_audio()
+                        except Exception:
+                            return TurnResult("held", reason="playback_unavailable")
+                    text = await sign_ingress.read_once()
+                    if text is None:
+                        return TurnResult("no_input")
+                    return await conversation.respond_to_sign(text)
+
                 with OwnerConsole(
                     store,
                     state_dir / "ledger.db",
@@ -231,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                         required_confirmation=effectful_tools,
                         sign_ingress=sign_ingress,
                         screen_sign=conversation.screen_sign if sign_ingress is not None else None,
+                        sign_responder=respond_to_one_sign if args.enable_camera_sign_responses else None,
                     )
         finally:
             ledger.close()
