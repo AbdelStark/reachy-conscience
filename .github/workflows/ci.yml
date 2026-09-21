@@ -39,6 +39,7 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run pytest
       - run: uv run python examples/guarded_turn.py
+      - run: uv run python examples/owned_voice_session.py
       - run: uv run conscience-owner-console --help
       - run: uv run conscience-voice --help
       - run: uv build
