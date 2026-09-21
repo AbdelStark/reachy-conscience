@@ -204,7 +204,9 @@ class AsyncTypeSafeGuard:
                 probabilities = {
                     key: float(value)
                     for key, value in answers.items()
-                    if key != "severity" and isinstance(value, (int, float)) and 0 <= value <= 1
+                    if key not in ("severity", "route_confidence", "fast_command_confidence")
+                    and isinstance(value, (int, float))
+                    and 0 <= value <= 1
                 }
                 route = None
                 if action.kind == "inbound" and all(

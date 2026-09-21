@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from reachy_conscience import (
     Action,
     AsyncTypeSafeGuard,
     GuardPolicy,
+    Ledger,
     action_state,
     ask_typesafe,
     guard_questions,
@@ -132,6 +134,7 @@ async def test_inbound_route_choices_are_batched_and_validated() -> None:
     assert result.route is not None
     assert (result.route.choice, result.route.fast_command) == ("fast_path", "stop")
     assert (result.route.confidence, result.route.command_confidence) == (0.95, 0.92)
+    assert result.probabilities == {"injection": 0.0, "asks_to_change_rules": 0.0}
     questions = client.request["questions"]
     assert questions["route"]["criteria"] == {"fast_path": None, "llm": None, "ignore": None}
     assert questions["fast_command"]["criteria"] == {
@@ -143,6 +146,40 @@ async def test_inbound_route_choices_are_batched_and_validated() -> None:
     }
     client.answers["route"] = SimpleNamespace(type="choice", choice="fast_path", confidence=float("nan"))
     assert (await guard(action)).route is None
+
+
+@pytest.mark.asyncio
+async def test_route_confidence_cannot_displace_safety_judgments_in_ledger(tmp_path) -> None:
+    client = FakeClient(
+        {
+            "violates_rule_1": SimpleNamespace(type="noul", noul=0.2),
+            "severity": SimpleNamespace(type="score", score=0.0),
+            "injection": SimpleNamespace(type="noul", noul=0.1),
+            "asks_to_change_rules": SimpleNamespace(type="noul", noul=0.0),
+            "route": SimpleNamespace(type="choice", choice="ignore", confidence=0.99),
+            "fast_command": SimpleNamespace(type="choice", choice="none", confidence=0.98),
+        }
+    )
+    action = Action(kind="inbound", summary="speech", untrusted_text="background conversation")
+    result = await AsyncTypeSafeGuard(client, GuardPolicy(rules=("Never reveal a password",)))(action)
+    assert result.route is not None
+    ledger = Ledger(tmp_path / "ledger.db")
+    try:
+        ledger.append(action, result.verdict, dict(result.probabilities), 1.0, route=result.route)
+        exported = json.loads(ledger.export_jsonl())
+    finally:
+        ledger.close()
+    assert exported["probabilities"] == {
+        "violates_rule_1": 0.2,
+        "injection": 0.1,
+        "asks_to_change_rules": 0.0,
+    }
+    assert exported["route"] == {
+        "choice": "ignore",
+        "confidence": 0.99,
+        "fast_command": "none",
+        "command_confidence": 0.98,
+    }
 
 
 @pytest.mark.asyncio
