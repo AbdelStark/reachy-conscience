@@ -2,8 +2,10 @@
 
 from .guard import Action, GuardPolicy, Verdict, decide, guard_action, is_hard_stop, lint_rules
 from .hold import HoldRegistry
+from .ingress import EnergySegmenter, OwnedAudioIngress
 from .jev import action_state, ask_typesafe, guard_questions, guard_typesafe
 from .ledger import Ledger
+from .local_asr import FasterWhisperTranscriber
 from .pipeline import GuardedConversation, Motion, OwnerApproval, Speech, ToolCall, TurnResult
 from .reachy_audio import AudioChunk, ReachyMediaAudio
 from .reachy_motion import BoundedPose, ReachyOutputStop, ReachySdkMotion, bounded_pose
@@ -17,6 +19,9 @@ __all__ = [
     "is_hard_stop",
     "lint_rules",
     "HoldRegistry",
+    "EnergySegmenter",
+    "OwnedAudioIngress",
+    "FasterWhisperTranscriber",
     "Ledger",
     "action_state",
     "ask_typesafe",

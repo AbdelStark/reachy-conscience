@@ -9,3 +9,4 @@
 - Add an offline ordering example and citation metadata.
 - Add a bounded, opt-in Reachy Mini 1.10 media adapter with fake-backend tests; no robot validation yet.
 - Bind motion proposals to the exact target seen by the guard, then validate conservative application caps in an opt-in SDK motion adapter; add a composite audio/motion stop port and fake-client tests.
+- Add bounded owned microphone segmentation and optional local-only faster-whisper ASR adapter, with synthetic PCM/fake-model capture-to-output ordering tests; no live recognition or robot validation.
