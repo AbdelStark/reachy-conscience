@@ -2,6 +2,10 @@
 
 An inspectable action guard for LLM-driven Reachy Mini apps. Applications submit a proposed utterance, tool call, motion, or inbound text as a typed record. Jev supplies narrow judgments; deterministic code chooses approve, hold, or block. A hard stop is always handled in code before any model call.
 
+![Conscience local owner console with default example rules and an empty verdict ledger](docs/local-console.png)
+
+_Local console with default example rules and no verdicts. The screenshot used a disposable state directory and a synthetic access token; no model, robot, or tool was connected._
+
 This repository contains the tested guard core, local ledger, owner policy/approval console, and an independently owned, non-streaming conversation path. It does **not** wrap or protect the official Conversation App. An experimental `conscience-voice` command composes the owned microphone, local ASR, proposal-only local LLM, Jev guard, offline TTS, SDK audio, policy console, and ledger for explicitly operator-paced turns. It is **not** an unattended or hardware-validated robot app: there is no SDK playback-complete acknowledgement, and the audio/stop path still needs on-robot validation. Motion and external tools are disabled; a private local-note tool is a separate explicit opt-in. It is **not** a physical safety system, prompt-injection cure, or substitute for motor limits, firmware emergency stop, or owner supervision. No block-rate or latency claim has been measured.
 
 ## Example
