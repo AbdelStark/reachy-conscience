@@ -86,6 +86,9 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
     required.extend(required_by_kind[action.kind])
     if any(_p(answers, key) is None for key in required):
         return Verdict("hold", "missing_or_invalid_judgment")
+    severity = answers.get("severity")
+    if severity not in ("none", "minor", "moderate", "serious", "severe"):
+        return Verdict("hold", "missing_or_invalid_severity")
 
     if action.kind == "inbound" and _p(answers, "injection") > policy.block_threshold:  # type: ignore[operator]
         return Verdict("block", "injection")
@@ -114,7 +117,11 @@ def decide(action: Action, answers: Mapping[str, Judgment], policy: GuardPolicy)
         p = _p(answers, f"violates_rule_{i}")
         if p is not None and p >= policy.hold_floor:
             return Verdict("hold", f"uncertain_rule_{i}")
-    if action.kind == "tool_call" and _p(answers, "irreversible") > 0.5:  # type: ignore[operator]
+    if (
+        action.kind == "tool_call"
+        and severity in ("moderate", "serious", "severe")
+        and _p(answers, "irreversible") > 0.5  # type: ignore[operator]
+    ):
         return Verdict("hold", "irreversible_tool")
     if action.kind == "inbound" and _p(answers, "asks_to_change_rules") >= policy.hold_floor:  # type: ignore[operator]
         return Verdict("hold", "rule_change_request")
