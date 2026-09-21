@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -141,3 +143,24 @@ def guard_typesafe(client: SystemOneClient, action: Action, policy: GuardPolicy)
         return decide(action, ask_typesafe(client, action, policy), policy)
     except Exception:
         return Verdict("hold", "judgment_unavailable")
+
+
+class AsyncTypeSafeGuard:
+    """Run a synchronous TypeSafe client off-loop for the owned pipeline.
+
+    The enclosing pipeline provides the decision timeout. A timed-out thread
+    may still finish its network call, but it has no output handle and cannot
+    dispatch the action after the pipeline has moved to a hold.
+    """
+
+    def __init__(self, client: SystemOneClient, policy: GuardPolicy) -> None:
+        self.client = client
+        self.policy = policy
+        self._client_lock = threading.Lock()
+
+    def _judge(self, action: Action) -> Verdict:
+        with self._client_lock:
+            return guard_typesafe(self.client, action, self.policy)
+
+    async def __call__(self, action: Action) -> Verdict:
+        return await asyncio.to_thread(self._judge, action)
