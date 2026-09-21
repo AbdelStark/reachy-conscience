@@ -12,3 +12,4 @@
 - Add bounded owned microphone segmentation and optional local-only faster-whisper ASR adapter, with synthetic PCM/fake-model capture-to-output ordering tests; no live recognition or robot validation.
 - Add a loopback-only, non-streaming Ollama proposal planner with strict typed JSON decoding, an async TypeSafe guard port, and an opt-in offline eSpeak/FFmpeg PCM synthesizer; fixture tests and CI exercise only software ordering, not robot behavior.
 - Add a versioned atomic policy store, five synthetic dispatch-free policy-preview actions, and a privacy-minimized verdict ledger with legacy migration and JSONL export; carry numeric Jev judgments into ledger rows.
+- Add a one-turn owned voice lifecycle host that serializes capture, final ASR, playback arming, and the guarded pipeline, with an external stop path and fake-port race tests; no continuous listening or robot validation.
