@@ -570,6 +570,50 @@ async def test_failed_stop_request_still_retires_pipeline():
 
 
 @pytest.mark.asyncio
+async def test_audio_revoke_failure_cannot_skip_approval_cancel_or_emergency_stop():
+    ports = Ports([Speech("would have spoken")])
+
+    async def guard(_action):
+        raise AssertionError("direct stop must not call the guard")
+
+    def failed_revoke():
+        ports.events.append(("revoke",))
+        raise RuntimeError("speaker revoke failed")
+
+    def cancel_all():
+        ports.events.append(("approval_cancel",))
+
+    ports.revoke = failed_revoke
+    ports.cancel_all = cancel_all
+    app = pipeline(ports, guard, owner_approval=ports)
+    with pytest.raises(RuntimeError, match="audio revocation failed"):
+        await app.run_turn("stop")
+    assert ports.events == [("revoke",), ("approval_cancel",), ("stop",)]
+    assert (await app.run_turn("say hello")).status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_optional_stop_port_attribute_failure_cannot_skip_emergency_stop():
+    class BrokenAudio(Ports):
+        @property
+        def revoke(self):
+            self.events.append(("revoke_lookup",))
+            raise RuntimeError("revoke lookup failed")
+
+    class BrokenApproval:
+        @property
+        def cancel_all(self):
+            raise RuntimeError("approval lookup failed")
+
+    ports = BrokenAudio()
+    app = pipeline(ports, lambda _action: None, owner_approval=BrokenApproval())
+    with pytest.raises(RuntimeError, match="audio revocation failed"):
+        await app.run_turn("stop")
+    assert ports.events == [("revoke_lookup",), ("stop",)]
+    assert (await app.run_turn("say hello")).status == "stopped"
+
+
+@pytest.mark.asyncio
 async def test_inbound_block_stops_planner_and_all_outputs():
     ports = Ports([Speech("hello")])
 

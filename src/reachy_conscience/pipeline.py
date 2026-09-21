@@ -253,16 +253,22 @@ class GuardedConversation:
         """Terminal owned stop, independent of the planner or output guard."""
         self._stopped = True
         self._generation += 1
-        revoke_audio = getattr(self.audio, "revoke", None)
-        if callable(revoke_audio):
-            revoke_audio()
-        cancel_pending = getattr(self.owner_approval, "cancel_all", None)
-        if callable(cancel_pending):
-            try:
+        revocation_error: Exception | None = None
+        try:
+            revoke_audio = getattr(self.audio, "revoke", None)
+            if callable(revoke_audio):
+                revoke_audio()
+        except Exception as exc:
+            revocation_error = exc
+        try:
+            cancel_pending = getattr(self.owner_approval, "cancel_all", None)
+            if callable(cancel_pending):
                 cancel_pending()
-            except Exception:
-                pass  # A failed approval cancel must not suppress the output stop.
+        except Exception:
+            pass  # A failed approval cancel must not suppress the output stop.
         await self.emergency_stop.stop()
+        if revocation_error is not None:
+            raise RuntimeError("audio revocation failed after output stop request") from revocation_error
         return TurnResult("stopped")
 
     async def run_turn(self, transcript: str) -> TurnResult:
