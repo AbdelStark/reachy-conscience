@@ -23,7 +23,7 @@ Repository = "https://github.com/AbdelStark/reachy-conscience"
 Issues = "https://github.com/AbdelStark/reachy-conscience/issues"
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.13", "build>=1.2"]
+dev = ["pytest>=8.3", "pytest-asyncio>=1.0", "ruff>=0.13", "build>=1.2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reachy_conscience"]

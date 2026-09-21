@@ -69,10 +69,7 @@ def test_irreversible_tool_always_holds_even_when_severity_is_low() -> None:
         verdict = decide(action, {**base, "severity": severity}, GuardPolicy())
         assert verdict.kind == "hold"
         assert verdict.reason == "irreversible_tool"
-    assert (
-        decide(action, {**base, "irreversible": 0.1, "severity": "minor"}, GuardPolicy()).kind
-        == "approve"
-    )
+    assert decide(action, {**base, "irreversible": 0.1, "severity": "minor"}, GuardPolicy()).kind == "approve"
 
 
 def test_rule_lint_and_hard_stop() -> None:
