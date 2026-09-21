@@ -4,7 +4,24 @@ let ownerToken = "";
 let registeredTools = [];
 let approvalAvailable = false;
 let pendingApproval = null;
+let sessionVersion = 0;
+let connecting = false;
 const byId = (id) => document.getElementById(id);
+
+class StaleSessionError extends Error {
+  constructor() {
+    super("Owner session changed.");
+    this.name = "StaleSessionError";
+  }
+}
+
+function assertSession(version) {
+  if (!ownerToken || version !== sessionVersion) throw new StaleSessionError();
+}
+
+function reportError(error, version) {
+  if (version === sessionVersion && !(error instanceof StaleSessionError)) status(error.message, true);
+}
 
 function status(message, failed = false) {
   const element = byId("status");
@@ -12,15 +29,25 @@ function status(message, failed = false) {
   element.classList.toggle("error", failed);
 }
 
-async function request(path, options = {}) {
+async function request(path, options = {}, version = sessionVersion) {
+  assertSession(version);
   const headers = { Authorization: `Bearer ${ownerToken}`, ...options.headers };
   const response = await fetch(path, { ...options, headers, cache: "no-store" });
+  assertSession(version);
   if (!response.ok) {
     let message = `Request failed (${response.status}).`;
     try { message = (await response.json()).error || message; } catch (_) { /* no body */ }
+    assertSession(version);
     throw new Error(message);
   }
   return response;
+}
+
+async function requestJson(path, options = {}, version = sessionVersion) {
+  const response = await request(path, options, version);
+  const result = await response.json();
+  assertSession(version);
+  return result;
 }
 
 function currentPolicy() {
@@ -77,20 +104,17 @@ function renderApproval(request) {
   byId("approve-action").disabled = byId("approval-confirm-name").value !== request.tool;
 }
 
-async function loadApproval() {
+async function loadApproval(version = sessionVersion) {
   if (!approvalAvailable || !ownerToken) return;
-  const response = await request("/api/approval");
-  renderApproval((await response.json()).pending);
+  renderApproval((await requestJson("/api/approval", {}, version)).pending);
 }
 
-async function loadPolicy() {
-  const response = await request("/api/policy");
-  renderPolicy(await response.json());
+async function loadPolicy(version = sessionVersion) {
+  renderPolicy(await requestJson("/api/policy", {}, version));
 }
 
-async function loadLedger() {
-  const response = await request("/api/ledger");
-  const { rows } = await response.json();
+async function loadLedger(version = sessionVersion) {
+  const { rows } = await requestJson("/api/ledger", {}, version);
   const body = byId("ledger-rows");
   body.replaceChildren();
   for (const row of rows) {
@@ -116,26 +140,33 @@ async function loadLedger() {
 }
 
 async function connect() {
+  if (connecting || ownerToken) return;
   ownerToken = byId("token").value.trim();
   if (!ownerToken) { status("Paste the owner token first.", true); return; }
+  const version = ++sessionVersion;
+  connecting = true;
   byId("token").value = "";
+  byId("connect").disabled = true;
+  byId("token").disabled = true;
+  byId("disconnect").disabled = false;
+  status("Connecting to the local owner console...");
   try {
-    await Promise.all([loadPolicy(), loadLedger()]);
-    await loadApproval();
+    await Promise.all([loadPolicy(version), loadLedger(version)]);
+    await loadApproval(version);
+    assertSession(version);
     byId("workspace").hidden = false;
-    byId("connect").disabled = true;
-    byId("token").disabled = true;
-    byId("disconnect").disabled = false;
     status("Connected to the local owner console.");
   } catch (error) {
-    ownerToken = "";
-    byId("workspace").hidden = true;
-    status(error.message, true);
+    if (version === sessionVersion) disconnect(error.message, true);
+  } finally {
+    if (version === sessionVersion) connecting = false;
   }
 }
 
-function disconnect() {
+function disconnect(message = "Token forgotten. Reloading also forgets it.", failed = false) {
+  ++sessionVersion;
   ownerToken = "";
+  connecting = false;
   registeredTools = [];
   approvalAvailable = false;
   pendingApproval = null;
@@ -143,49 +174,68 @@ function disconnect() {
   byId("connect").disabled = false;
   byId("token").disabled = false;
   byId("disconnect").disabled = true;
+  byId("rules").value = "";
+  byId("block-threshold").value = "";
+  byId("hold-floor").value = "";
+  byId("tools").replaceChildren();
+  byId("ledger-rows").replaceChildren();
+  byId("approval-confirm-name").value = "";
+  byId("approval-tool").textContent = "";
+  byId("approval-arguments").textContent = "";
+  byId("approval-digest").textContent = "";
+  byId("approval-seconds").textContent = "";
+  byId("approval-section").hidden = true;
+  byId("approval-empty").hidden = false;
+  byId("approval-request").hidden = true;
+  byId("approve-action").disabled = true;
+  byId("preview").disabled = true;
+  byId("redteam").disabled = true;
   byId("preview-results").replaceChildren();
   byId("redteam-results").replaceChildren();
-  status("Token forgotten. Reloading also forgets it.");
+  status(message, failed);
 }
 
 async function decideApproval(approve) {
   if (!pendingApproval) return;
+  const version = sessionVersion;
   const { request_id, digest, tool } = pendingApproval;
   if (approve && byId("approval-confirm-name").value !== tool) return;
   if (approve && !window.confirm(`Approve ${tool} with exactly the JSON arguments shown?`)) return;
   try {
-    await request("/api/approval", {
+    await requestJson("/api/approval", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ request_id, digest, approve }),
-    });
+    }, version);
     renderApproval(null);
     status(approve ? "Approval recorded; execution is not confirmed." : "Action denied.");
   } catch (error) {
-    await loadApproval();
-    status(error.message, true);
+    if (version !== sessionVersion) return;
+    try { await loadApproval(version); } catch (_) { /* preserve original error */ }
+    reportError(error, version);
   }
 }
 
 async function save() {
+  const version = sessionVersion;
   try {
-    const response = await request("/api/policy", {
+    const policy = await requestJson("/api/policy", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(currentPolicy()),
-    });
-    renderPolicy(await response.json());
+    }, version);
+    renderPolicy(policy);
     status("Policy saved. Restart or reload the guard host to apply it to live turns.");
-  } catch (error) { status(error.message, true); }
+  } catch (error) { reportError(error, version); }
 }
 
 async function preview() {
   if (!window.confirm("Run five synthetic cases through the configured guard? This can make five billable calls.")) return;
+  const version = sessionVersion;
   const button = byId("preview");
   button.disabled = true;
   try {
-    const response = await request("/api/preview", {
+    const { results } = await requestJson("/api/preview", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ policy: currentPolicy(), confirm_live_calls: true }),
-    });
-    const { results } = await response.json();
+    }, version);
     const holder = byId("preview-results");
     holder.replaceChildren();
     const heading = document.createElement("h3");
@@ -197,20 +247,20 @@ async function preview() {
       holder.append(line);
     }
     status("Preview complete. No action was dispatched.");
-  } catch (error) { status(error.message, true); }
-  finally { button.disabled = false; }
+  } catch (error) { reportError(error, version); }
+  finally { if (version === sessionVersion) button.disabled = false; }
 }
 
 async function redteam() {
   if (!window.confirm("Run 20 self-authored synthetic cases through the configured guard? This can make 20 billable calls. No action will execute.")) return;
+  const version = sessionVersion;
   const button = byId("redteam");
   button.disabled = true;
   try {
-    const response = await request("/api/redteam", {
+    const report = await requestJson("/api/redteam", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ policy: currentPolicy(), confirm_live_calls: true }),
-    });
-    const report = await response.json();
+    }, version);
     const holder = byId("redteam-results");
     holder.replaceChildren();
     const heading = document.createElement("h3");
@@ -226,31 +276,34 @@ async function redteam() {
       holder.append(line);
     }
     status("Synthetic guard run complete. No action was dispatched.");
-  } catch (error) { status(error.message, true); }
-  finally { button.disabled = false; }
+  } catch (error) { reportError(error, version); }
+  finally { if (version === sessionVersion) button.disabled = false; }
 }
 
 async function exportLedger() {
+  const version = sessionVersion;
   try {
-    const response = await request("/api/export");
+    const response = await request("/api/export", {}, version);
     const blob = await response.blob();
+    assertSession(version);
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = "conscience-ledger.jsonl";
     link.click();
     URL.revokeObjectURL(link.href);
     status("Exported JSONL without summaries.");
-  } catch (error) { status(error.message, true); }
+  } catch (error) { reportError(error, version); }
 }
 
 byId("connect").addEventListener("click", connect);
 byId("token").addEventListener("keydown", (event) => { if (event.key === "Enter") connect(); });
-byId("disconnect").addEventListener("click", disconnect);
+byId("disconnect").addEventListener("click", () => disconnect());
 byId("save").addEventListener("click", save);
 byId("preview").addEventListener("click", preview);
 byId("redteam").addEventListener("click", redteam);
 byId("refresh").addEventListener("click", async () => {
-  try { await loadLedger(); status("Ledger refreshed."); } catch (error) { status(error.message, true); }
+  const version = sessionVersion;
+  try { await loadLedger(version); status("Ledger refreshed."); } catch (error) { reportError(error, version); }
 });
 byId("export").addEventListener("click", exportLedger);
 byId("approval-confirm-name").addEventListener("input", () => {
@@ -258,4 +311,10 @@ byId("approval-confirm-name").addEventListener("input", () => {
 });
 byId("approve-action").addEventListener("click", () => decideApproval(true));
 byId("deny-action").addEventListener("click", () => decideApproval(false));
-setInterval(() => { if (ownerToken && approvalAvailable) loadApproval().catch(() => status("Approval channel unavailable.", true)); }, 1000);
+setInterval(() => {
+  if (!ownerToken || !approvalAvailable) return;
+  const version = sessionVersion;
+  loadApproval(version).catch((error) => {
+    if (version === sessionVersion && !(error instanceof StaleSessionError)) status("Approval channel unavailable.", true);
+  });
+}, 1000);
