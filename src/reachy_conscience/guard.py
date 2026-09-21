@@ -19,6 +19,7 @@ class Action:
     tool: str | None = None
     tool_arguments_json: str | None = None
     motion_class: str | None = None
+    motion_target_json: str | None = None
     untrusted_text: str | None = None
     text: str | None = None
     user_request: str | None = None

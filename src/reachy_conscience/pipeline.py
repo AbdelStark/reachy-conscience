@@ -40,6 +40,15 @@ Guard = Callable[[Action], Awaitable[Verdict]]
 _CONFIRMABLE_HOLDS = frozenset({"confirm_before", "model_requests_confirmation", "irreversible_tool"})
 
 
+def _canonical_object(value: Mapping[str, Any], max_bytes: int) -> str:
+    if not isinstance(value, Mapping) or any(not isinstance(key, str) for key in value):
+        raise ValueError("expected an object with string keys")
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    if len(encoded.encode("utf-8")) > max_bytes:
+        raise ValueError("object exceeds byte limit")
+    return encoded
+
+
 class Planner(Protocol):
     async def plan(self, transcript: str) -> Sequence[Proposal]: ...
 
@@ -177,6 +186,7 @@ class GuardedConversation:
         if generation != self._generation:
             return TurnResult("interrupted")
         tool_arguments_json: str | None = None
+        motion_target_json: str | None = None
         try:
             if isinstance(proposal, Speech):
                 if not proposal.text.strip() or len(proposal.text) > 2000:
@@ -185,14 +195,9 @@ class GuardedConversation:
             elif isinstance(proposal, ToolCall):
                 if not proposal.name or len(proposal.name) > 80 or not proposal.summary.strip():
                     return TurnResult("held", reason="invalid_tool")
-                if not isinstance(proposal.arguments, Mapping) or any(
-                    not isinstance(key, str) for key in proposal.arguments
-                ):
-                    return TurnResult("held", reason="invalid_tool_arguments")
-                tool_arguments_json = json.dumps(
-                    proposal.arguments, sort_keys=True, separators=(",", ":"), allow_nan=False
-                )
-                if len(tool_arguments_json.encode("utf-8")) > 4096:
+                try:
+                    tool_arguments_json = _canonical_object(proposal.arguments, 4096)
+                except (TypeError, ValueError, OverflowError, RecursionError):
                     return TurnResult("held", reason="invalid_tool_arguments")
                 action = Action(
                     kind="tool_call",
@@ -202,7 +207,17 @@ class GuardedConversation:
                     user_request=transcript,
                 )
             elif isinstance(proposal, Motion):
-                action = Action(kind="motion", summary="motion proposal", motion_class=proposal.motion_class)
+                try:
+                    motion_target_json = _canonical_object(proposal.target, 2048)
+                except (TypeError, ValueError, OverflowError, RecursionError):
+                    return TurnResult("held", reason="invalid_motion_target")
+                action = Action(
+                    kind="motion",
+                    summary="motion proposal",
+                    motion_class=proposal.motion_class,
+                    motion_target_json=motion_target_json,
+                    user_request=transcript,
+                )
             else:
                 return TurnResult("held", reason="unknown_proposal")
         except (TypeError, ValueError, OverflowError, RecursionError):
@@ -255,8 +270,11 @@ class GuardedConversation:
         elif isinstance(proposal, Motion):
             if not self.enable_motion or self.motion is None:
                 return TurnResult("held", reason="motion_not_enabled")
+            assert motion_target_json is not None
             try:
-                await self.motion.execute(proposal.motion_class, proposal.target)
+                await self.motion.execute(proposal.motion_class, json.loads(motion_target_json))
             except Exception:
                 return TurnResult("output_error", reason="motion_sink_failed")
+        if generation != self._generation:
+            return TurnResult("interrupted")
         return TurnResult("delivered", 1)

@@ -44,3 +44,4 @@ jobs:
       - run: uv sync --locked --dev --extra robot
       - run: uv run --extra robot python scripts/check_reachy_sdk_api.py
       - run: uv run --extra robot pytest tests/test_reachy_audio.py
+      - run: uv run --extra robot pytest tests/test_reachy_motion.py

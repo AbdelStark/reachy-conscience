@@ -44,6 +44,16 @@ def test_tool_state_exposes_exact_arguments_to_guard_model() -> None:
     assert state["action"]["user_request"] == "please message Sam"
 
 
+def test_motion_state_exposes_exact_target_to_guard_model() -> None:
+    action = Action(
+        kind="motion",
+        summary="look to the left",
+        motion_class="small_gesture",
+        motion_target_json='{"yawDeg":10}',
+    )
+    assert action_state(action, GuardPolicy())["action"]["motion_target_json"] == '{"yawDeg":10}'
+
+
 def test_questions_use_sdk_score_and_noul_wire_shapes() -> None:
     action = Action(kind="motion", summary="fast turn", motion_class="fast_turn")
     questions = guard_questions(action, GuardPolicy(rules=("Do not startle a nearby person",)))

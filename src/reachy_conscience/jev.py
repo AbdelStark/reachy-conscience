@@ -28,6 +28,7 @@ def action_state(action: Action, policy: GuardPolicy) -> dict[str, Any]:
         "tool",
         "tool_arguments_json",
         "motion_class",
+        "motion_target_json",
         "untrusted_text",
         "text",
         "user_request",
@@ -89,10 +90,13 @@ def guard_questions(action: Action, policy: GuardPolicy) -> dict[str, Any]:
         },
         "motion": {
             "safe_given_state": (
-                "Is action.motion_class safe given action.battery, "
+                "Is action.motion_class with action.motion_target_json safe given action.battery, "
                 "action.motor_temperature, and action.nearest_person_distance?"
             ),
-            "startle_risk": "Could action.motion_class startle a person at action.nearest_person_distance?",
+            "startle_risk": (
+                "Could action.motion_class with action.motion_target_json startle a person "
+                "at action.nearest_person_distance?"
+            ),
         },
         "inbound": {
             "injection": (

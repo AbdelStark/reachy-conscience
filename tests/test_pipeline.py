@@ -352,3 +352,34 @@ def test_effectful_tools_require_distinct_trusted_ports():
         )
     with pytest.raises(ValueError, match="owner approval"):
         pipeline(ports, guard, effectful_tools=frozenset({"send_message"}))
+
+
+@pytest.mark.asyncio
+async def test_motion_target_reviewed_is_the_target_dispatched():
+    target = {"yawDeg": 10, "rightAntennaDeg": 15}
+    ports = Ports([Motion("small_gesture", target)])
+
+    async def guard(action):
+        if action.kind == "motion":
+            assert action.motion_target_json == '{"rightAntennaDeg":15,"yawDeg":10}'
+            assert action.user_request == "look toward Sam"
+            target["yawDeg"] = -30
+        return Verdict("approve", "ok")
+
+    result = await pipeline(ports, guard, enable_motion=True).run_turn("look toward Sam")
+    assert result.status == "complete"
+    assert ("execute", "small_gesture", {"rightAntennaDeg": 15, "yawDeg": 10}) in ports.events
+
+
+@pytest.mark.asyncio
+async def test_invalid_motion_target_never_reaches_guard_or_sink():
+    ports = Ports([Motion("small_gesture", {"yawDeg": float("inf")})])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "ok")
+
+    result = await pipeline(ports, guard, enable_motion=True).run_turn("look")
+    assert (result.status, result.reason) == ("held", "invalid_motion_target")
+    assert ("guard", "motion") not in ports.events
+    assert all(event[0] != "execute" for event in ports.events)
