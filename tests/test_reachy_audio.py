@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from reachy_conscience import GuardedConversation, ReachyMediaAudio, Speech, Verdict
+from reachy_conscience import GuardedConversation, OwnedPlaybackGate, ReachyMediaAudio, Speech, Verdict
 
 
 class FakeMedia:
@@ -145,7 +145,7 @@ async def test_microphone_chunks_are_copied_and_validated():
 async def test_guard_blocks_before_reachy_push_and_stop_halts_owned_audio():
     media = FakeMedia()
     audio = ReachyMediaAudio(media)
-    await audio.arm_playback()
+    playback = OwnedPlaybackGate(audio)
 
     class Ports:
         async def plan(self, _transcript):
@@ -155,15 +155,15 @@ async def test_guard_blocks_before_reachy_push_and_stop_halts_owned_audio():
             return np.array([0.1], dtype=np.float32).tobytes()
 
         async def stop(self):
-            await audio.halt_audio()
+            await playback.halt_audio()
 
     async def guard(action):
         return Verdict("block" if action.kind == "utterance" else "approve", "fixture")
 
     app = GuardedConversation(
-        planner=Ports(), guard=guard, synthesizer=Ports(), audio=audio, emergency_stop=Ports()
+        planner=Ports(), guard=guard, synthesizer=Ports(), audio=playback, emergency_stop=Ports()
     )
     assert (await app.run_turn("hello")).status == "block"
-    assert all(not isinstance(call, tuple) for call in media.calls)
+    assert media.calls == []
     assert (await app.run_turn("stop")).status == "stopped"
     assert media.calls[-2:] == ["clear_player", "stop_playing"]

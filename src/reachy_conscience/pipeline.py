@@ -187,6 +187,9 @@ class GuardedConversation:
     async def _stop_now(self) -> TurnResult:
         """Terminal owned stop, independent of the planner or output guard."""
         self._generation += 1
+        revoke_audio = getattr(self.audio, "revoke", None)
+        if callable(revoke_audio):
+            revoke_audio()
         cancel_pending = getattr(self.owner_approval, "cancel_all", None)
         if callable(cancel_pending):
             try:
@@ -304,6 +307,8 @@ class GuardedConversation:
             try:
                 await self.audio.enqueue(audio)
             except Exception:
+                if generation != self._generation:
+                    return TurnResult("interrupted")
                 return TurnResult("output_error", reason="audio_sink_failed")
         elif isinstance(proposal, ToolCall):
             if self.tools is None or proposal.name not in self.read_only_tools | self.effectful_tools:

@@ -25,7 +25,7 @@ from .policy_store import PolicyStore, dry_run_policy, policy_from_lines, previe
 from .proposal_planner import LocalOllamaPlanner, decode_proposals
 from .reachy_audio import AudioChunk, ReachyMediaAudio
 from .reachy_motion import BoundedPose, ReachyOutputStop, ReachySdkMotion, bounded_pose
-from .session import OwnedVoiceSession
+from .session import OwnedPlaybackGate, OwnedVoiceSession
 
 __all__ = [
     "Action",
@@ -56,6 +56,7 @@ __all__ = [
     "AsyncTypeSafeGuard",
     "GuardedConversation",
     "OwnedVoiceSession",
+    "OwnedPlaybackGate",
     "Speech",
     "ToolCall",
     "Motion",

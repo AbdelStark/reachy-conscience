@@ -20,43 +20,101 @@ class Ingress(Protocol):
 
 class Playback(Protocol):
     async def arm_playback(self) -> None: ...
+    async def enqueue(self, audio: bytes) -> None: ...
     async def halt_audio(self) -> None: ...
+
+
+class OwnedPlaybackGate:
+    """Arm the owned speaker only when guarded speech reaches its audio sink.
+
+    A terminal stop revokes future enqueues synchronously. Stop requests the
+    backend halt without waiting for a stalled arm, then waits for any arm or
+    enqueue already in flight and halts again if it raced with the first halt.
+    Queue clearance remains an SDK request, not a physical-silence receipt.
+    """
+
+    def __init__(self, backend: Playback) -> None:
+        self.backend = backend
+        self._output_lock = asyncio.Lock()
+        self._armed = False
+        self._revoked = False
+
+    @property
+    def armed(self) -> bool:
+        return self._armed
+
+    def revoke(self) -> None:
+        self._revoked = True
+
+    async def enqueue(self, audio: bytes) -> None:
+        async with self._output_lock:
+            if self._revoked:
+                raise RuntimeError("owned playback was stopped")
+            try:
+                if not self._armed:
+                    await self.backend.arm_playback()
+                    self._armed = True
+                if self._revoked:
+                    raise RuntimeError("owned playback was stopped")
+                await self.backend.enqueue(audio)
+                if self._revoked:
+                    raise RuntimeError("owned playback was stopped")
+            except BaseException:
+                # Arm or push may have partially changed the SDK queue.
+                self._armed = False
+                try:
+                    await self.backend.halt_audio()
+                except Exception:
+                    pass  # Keep the original failure; the gate stays disarmed.
+                raise
+
+    async def halt_audio(self) -> None:
+        self._armed = False
+        try:
+            await self.backend.halt_audio()
+        finally:
+            async with self._output_lock:
+                if self._armed:
+                    try:
+                        await self.backend.halt_audio()
+                    finally:
+                        self._armed = False
 
 
 class OwnedVoiceSession:
     """Serialize capture and turns; allow an external stop to interrupt either.
 
-    Capture stops before transcription returns. Playback is armed only after a
-    non-stop final transcript, and GuardedConversation still owns every output
-    decision. A later run clears the previous owned audio queue before capture;
+    Capture stops before transcription returns. Playback is armed only when
+    guarded speech reaches the owned audio sink. A later run clears the
+    previous owned audio queue before capture;
     the caller must pace turns because queue clearance is not an acknowledged
     playback-complete signal. ``stop`` is terminal for this session; construct
     a new instance to resume after an operator has checked the robot.
     """
 
-    def __init__(self, ingress: Ingress, conversation: GuardedConversation, playback: Playback) -> None:
+    def __init__(
+        self, ingress: Ingress, conversation: GuardedConversation, playback: OwnedPlaybackGate
+    ) -> None:
+        if conversation.audio is not playback:
+            raise ValueError("conversation must use the owned playback gate")
         self.ingress = ingress
         self.conversation = conversation
         self.playback = playback
         self._turn_lock = asyncio.Lock()
-        self._output_lock = asyncio.Lock()
         self._capture_task: asyncio.Task[str | None] | None = None
         self._stopped = False
-        self._arming = False
-        self._playback_armed = False
 
     async def run_once(self, *, listen_timeout_s: float = 30.0) -> TurnResult:
         async with self._turn_lock:
             if self._stopped:
                 return TurnResult("stopped")
-            if self._playback_armed:
+            if self.playback.armed:
                 # A completed enqueue is not a playback-complete receipt. Clear
                 # the previous owned queue before reopening the microphone.
                 try:
                     await self.playback.halt_audio()
                 except Exception:
                     return TurnResult("held", reason="playback_unavailable")
-                self._playback_armed = False
                 if self._stopped:
                     return TurnResult("interrupted")
             capture = asyncio.create_task(self.ingress.listen_once(timeout_s=listen_timeout_s))
@@ -78,19 +136,6 @@ class OwnedVoiceSession:
             if is_hard_stop(transcript):
                 self._stopped = True
                 return await self.conversation.run_turn(transcript)
-            async with self._output_lock:
-                if self._stopped:
-                    return TurnResult("interrupted")
-                try:
-                    self._arming = True
-                    await self.playback.arm_playback()
-                    self._playback_armed = True
-                except Exception:
-                    return TurnResult("held", reason="playback_unavailable")
-                finally:
-                    self._arming = False
-                if self._stopped:
-                    return TurnResult("interrupted")
             result = await self.conversation.run_turn(transcript)
             if result.status == "stopped":
                 self._stopped = True
@@ -102,13 +147,7 @@ class OwnedVoiceSession:
         capture = self._capture_task
         if capture is not None and not capture.done():
             capture.cancel()
-        arming = self._arming
-        # The first stop must not wait for a stalled playback-arm call.
         result = await self.conversation.run_turn("stop")
-        if arming:
-            # If arming raced with the first stop, disarm again once it ends.
-            async with self._output_lock:
-                await self.conversation.run_turn("stop")
         if capture is not None:
             try:
                 await capture

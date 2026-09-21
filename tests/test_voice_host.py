@@ -144,7 +144,8 @@ def test_cli_composes_guarded_owned_ports_without_running_a_turn(tmp_path, monke
 
     def inspect_session(session, _store, guard, **_options):
         conversation = session.conversation
-        assert session.ingress.capture is session.playback is conversation.audio
+        assert session.ingress.capture is session.playback.backend
+        assert session.playback is conversation.audio
         assert conversation.guard is guard
         assert conversation.require_inbound_route is True
         assert conversation.emergency_stop.audio is conversation.audio

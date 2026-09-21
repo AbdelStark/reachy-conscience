@@ -30,7 +30,7 @@ from .policy_store import PolicyStore
 from .proposal_planner import LocalOllamaPlanner
 from .reachy_audio import ReachyMediaAudio
 from .reachy_motion import ReachyOutputStop, ReachySdkMotion
-from .session import OwnedVoiceSession
+from .session import OwnedPlaybackGate, OwnedVoiceSession
 
 
 class TurnSession(Protocol):
@@ -141,14 +141,15 @@ def main(argv: list[str] | None = None) -> int:
                 use_sim=False,
             ) as robot:
                 audio = ReachyMediaAudio(robot.media)
+                playback = OwnedPlaybackGate(audio)
                 motion = ReachySdkMotion(robot)  # Never armed; stop still requests StopMoveCmd.
                 guard = AsyncTypeSafeGuard(client, policy)
                 conversation = GuardedConversation(
                     planner=LocalOllamaPlanner(args.ollama_model, enable_local_notes=args.enable_local_notes),
                     guard=guard,
                     synthesizer=EspeakFfmpegSynthesizer(),
-                    audio=audio,
-                    emergency_stop=ReachyOutputStop(audio, motion),
+                    audio=playback,
+                    emergency_stop=ReachyOutputStop(playback, motion),
                     ledger=ledger,
                     tools=notes_tool,
                     effectful_tools=effectful_tools,
@@ -158,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 session = OwnedVoiceSession(
                     OwnedAudioIngress(audio, transcriber, channels=robot.media.get_input_channels()),
                     conversation,
-                    audio,
+                    playback,
                 )
                 with OwnerConsole(
                     store,

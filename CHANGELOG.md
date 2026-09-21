@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Arm owned speaker playback lazily only when approved speech reaches its audio sink; blocked, ignored, and no-input turns never call `start_playing()`. Fence stop against in-flight arming/enqueue and request a follow-up halt after a race; fake-port and SDK-boundary tests only.
 - Keep inbound route confidences in dedicated route metadata, not the ledger's top-three safety-judgment probabilities; add an export regression test.
 - Batch inbound Choice routing with the guard judgment; make the operator-paced host fail closed on missing or uncertain routes, handle only ignore and stop in code, and hold unsupported look/quiet/sleep commands. Record validated route proposals in `conscience.verdict@2` without transcript text; fixture tests only.
 - Add a packaged 20-case self-authored spoken/sign-style red-team corpus, dispatch-free guard runner, verdict counts and observed p95, and an explicitly confirmed owner-console run; no live model results or safety claims.
