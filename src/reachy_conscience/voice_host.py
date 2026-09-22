@@ -267,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                     synthesizer=EspeakFfmpegSynthesizer(),
                     audio=playback,
                     emergency_stop=ReachyOutputStop(playback, motion),
+                    quiet_output=playback,
                     ledger=ledger,
                     tools=notes_tool,
                     effectful_tools=effectful_tools,

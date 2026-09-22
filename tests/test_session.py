@@ -113,6 +113,25 @@ def test_session_rejects_a_conversation_that_bypasses_its_playback_gate():
         OwnedVoiceSession(ports, conversation, gate)
 
 
+def test_session_rejects_a_quiet_port_outside_its_playback_gate():
+    ports = Ports()
+    gate = OwnedPlaybackGate(ports)
+
+    async def guard(_action):
+        return Verdict("approve", "fixture")
+
+    conversation = GuardedConversation(
+        planner=ports,
+        guard=guard,
+        synthesizer=ports,
+        audio=gate,
+        emergency_stop=ports,
+        quiet_output=ports,
+    )
+    with pytest.raises(ValueError, match="quiet output must use the owned playback gate"):
+        OwnedVoiceSession(ports, conversation, gate)
+
+
 @pytest.mark.asyncio
 async def test_capture_final_text_then_guard_before_synthesis_and_enqueue():
     ports = Ports()
@@ -164,6 +183,36 @@ async def test_ignored_inbound_turn_never_arms_the_speaker():
     result = await OwnedVoiceSession(ports, conversation, ports.gate).run_once()
     assert result.status == "ignored"
     assert ports.events == ["capture_start", "asr_final", "capture_stop", "guard_inbound"]
+
+
+@pytest.mark.asyncio
+async def test_owned_quiet_route_clears_audio_without_arming_or_planning():
+    ports = Ports("be quiet")
+    gate = OwnedPlaybackGate(ports)
+    ports.gate = gate
+
+    async def guard(action):
+        ports.events.append(f"guard_{action.kind}")
+        return GuardAssessment(
+            Verdict("approve", "fixture"), route=InboundRoute("fast_path", 0.9, "quiet", 0.9)
+        )
+
+    conversation = GuardedConversation(
+        planner=ports,
+        guard=guard,
+        synthesizer=ports,
+        audio=gate,
+        emergency_stop=ports,
+        quiet_output=gate,
+        require_inbound_route=True,
+    )
+    voice = OwnedVoiceSession(ports, conversation, gate)
+    assert (await voice.run_once()).status == "quieted"
+    assert ports.events == ["capture_start", "asr_final", "capture_stop", "guard_inbound", "halt"]
+    assert gate.armed is False and gate.needs_flush is False
+    assert (await voice.run_once()).status == "quieted"
+    assert ports.events.count("capture_start") == 2
+    assert "plan" not in ports.events and "arm" not in ports.events
 
 
 @pytest.mark.asyncio

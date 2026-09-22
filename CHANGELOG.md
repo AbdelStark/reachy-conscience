@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an opt-in audio-only `quiet` fast path in the owned voice host: confident inbound routing can request the same owned playback-gate flush without planning or synthesizing speech. A failed flush ends the host session; fake-port tests do not establish physical silence or playback completion. `look_at_speaker` and `sleep` remain disabled.
 - Pin the shared `reachy-jev` Python Unicode transcript-bound update and retain the reviewed guard question wires; this is package-contract validation, not a live TypeSafe or robot result.
 - Prevalidate and detach every proposal's fields and bounded tool/motion JSON from planner-owned mappings before any item in a batch can reach an output guard or sink. A structurally malformed later item now holds the whole batch with zero dispatched outputs, and later mutation of the planner's original arguments cannot change the prepared batch; guard decisions and runtime sink failures can still stop a turn after earlier approved actions.
 - Require a finite 0–1 probability on read-only Reflex `user_addressed`, `yield`, and `interrupt` hints; reject JSON `null` instead of treating it as an unscored event.

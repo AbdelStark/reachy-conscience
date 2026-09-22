@@ -110,6 +110,8 @@ class OwnedVoiceSession:
     ) -> None:
         if conversation.audio is not playback:
             raise ValueError("conversation must use the owned playback gate")
+        if conversation.quiet_output is not None and conversation.quiet_output is not playback:
+            raise ValueError("quiet output must use the owned playback gate")
         self.ingress = ingress
         self.conversation = conversation
         self.playback = playback

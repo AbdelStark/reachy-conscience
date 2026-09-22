@@ -99,6 +99,10 @@ class AudioOutput(Protocol):
     async def enqueue(self, audio: bytes) -> None: ...
 
 
+class QuietOutput(Protocol):
+    async def halt_audio(self) -> None: ...
+
+
 class ToolOutput(Protocol):
     async def execute(self, name: str, arguments: Mapping[str, Any]) -> None: ...
 
@@ -164,6 +168,7 @@ class GuardedConversation:
         synthesizer: Synthesizer,
         audio: AudioOutput,
         emergency_stop: EmergencyStop,
+        quiet_output: QuietOutput | None = None,
         tools: ToolOutput | None = None,
         read_only_tools: frozenset[str] = frozenset(),
         effectful_tools: frozenset[str] = frozenset(),
@@ -219,6 +224,7 @@ class GuardedConversation:
         self.synthesizer = synthesizer
         self.audio = audio
         self.emergency_stop = emergency_stop
+        self.quiet_output = quiet_output
         self.tools = tools
         self.read_only_tools = frozenset(read_only_tools)
         self.effectful_tools = frozenset(effectful_tools)
@@ -337,8 +343,19 @@ class GuardedConversation:
                         return TurnResult("held", reason="conflicting_route")
                     return TurnResult("ignored", reason="not_directed_at_robot")
                 if route.choice == "fast_path":
-                    if route.fast_command == "stop" and route.command_confidence >= 0.7:
-                        return await self._stop_now()
+                    if route.command_confidence >= 0.7:
+                        if route.fast_command == "stop":
+                            return await self._stop_now()
+                        if route.fast_command == "quiet" and self.quiet_output is not None:
+                            try:
+                                await self.quiet_output.halt_audio()
+                            except Exception:
+                                if generation != self._generation:
+                                    return TurnResult("interrupted")
+                                return TurnResult("output_error", reason="audio_halt_failed")
+                            if generation != self._generation:
+                                return TurnResult("interrupted")
+                            return TurnResult("quieted")
                     return TurnResult("held", reason="fast_command_not_enabled")
                 if route.choice != "llm":
                     return TurnResult("held", reason="route_unavailable")

@@ -15,6 +15,7 @@ from reachy_conscience import (
     MotionContextSnapshot,
     Speech,
     ToolCall,
+    TurnResult,
     Verdict,
     decide,
 )
@@ -39,6 +40,9 @@ class Ports:
 
     async def enqueue(self, audio):
         self.events.append(("enqueue", audio))
+
+    async def halt_audio(self):
+        self.events.append(("halt_audio",))
 
     async def execute(self, *args):
         self.events.append(("execute", *args))
@@ -124,6 +128,84 @@ async def test_confident_llm_route_still_guards_output_before_enqueue():
         ("synthesize", "hello back"),
         ("enqueue", b"hello back"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_opted_in_quiet_route_only_requests_owned_audio_halt():
+    ports = Ports([Speech("must not be planned")])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return GuardAssessment(
+            Verdict("approve", "fixture"), route=InboundRoute("fast_path", 0.9, "quiet", 0.9)
+        )
+
+    conversation = pipeline(ports, guard, require_inbound_route=True, quiet_output=ports)
+    result = await conversation.run_turn("be quiet")
+    assert result == TurnResult("quieted")
+    assert ports.events == [("guard", "inbound"), ("halt_audio",)]
+    assert (await conversation.run_turn("be quiet")).status == "quieted"
+
+
+@pytest.mark.asyncio
+async def test_quiet_route_holds_without_confident_command_or_port():
+    ports = Ports()
+
+    async def guard(_action):
+        return GuardAssessment(
+            Verdict("approve", "fixture"), route=InboundRoute("fast_path", 0.9, "quiet", 0.69)
+        )
+
+    assert (
+        await pipeline(ports, guard, require_inbound_route=True, quiet_output=ports).run_turn("quiet")
+    ).status == "held"
+    assert ports.events == []
+
+
+@pytest.mark.asyncio
+async def test_quiet_halt_failure_is_output_error_and_never_plans():
+    ports = Ports([Speech("must not be planned")])
+
+    async def guard(_action):
+        return GuardAssessment(
+            Verdict("approve", "fixture"), route=InboundRoute("fast_path", 0.9, "quiet", 0.9)
+        )
+
+    async def failed_halt():
+        ports.events.append(("halt_audio",))
+        raise OSError("queue unknown")
+
+    ports.halt_audio = failed_halt
+    result = await pipeline(ports, guard, require_inbound_route=True, quiet_output=ports).run_turn("quiet")
+    assert result == TurnResult("output_error", reason="audio_halt_failed")
+    assert ports.events == [("halt_audio",)]
+
+
+@pytest.mark.asyncio
+async def test_direct_stop_during_quiet_halt_retires_the_turn():
+    ports = Ports()
+    halt_started = asyncio.Event()
+    release_halt = asyncio.Event()
+
+    async def guard(_action):
+        return GuardAssessment(
+            Verdict("approve", "fixture"), route=InboundRoute("fast_path", 0.9, "quiet", 0.9)
+        )
+
+    async def slow_halt():
+        ports.events.append(("halt_audio",))
+        halt_started.set()
+        await release_halt.wait()
+
+    ports.halt_audio = slow_halt
+    conversation = pipeline(ports, guard, require_inbound_route=True, quiet_output=ports)
+    quiet_turn = asyncio.create_task(conversation.run_turn("quiet"))
+    await halt_started.wait()
+    assert (await conversation.run_turn("stop")).status == "stopped"
+    release_halt.set()
+    assert (await quiet_turn).status == "interrupted"
+    assert (await conversation.run_turn("say something")).status == "stopped"
+    assert ports.events == [("halt_audio",), ("stop",)]
 
 
 @pytest.mark.asyncio
