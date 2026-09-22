@@ -109,7 +109,7 @@ class ReflexEventInbox:
                 return False
             if kind in {"attention", "user_addressed"} and person is None:
                 return False
-            if probability is not None and (
+            if kind != "attention" and (
                 isinstance(probability, bool)
                 or not isinstance(probability, (int, float))
                 or not math.isfinite(probability)

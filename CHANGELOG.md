@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Require a finite 0–1 probability on read-only Reflex `user_addressed`, `yield`, and `interrupt` hints; reject JSON `null` instead of treating it as an unscored event.
 - Continue to the independent emergency-stop adapter even when optional audio revocation or approval cancellation fails; report an audio-revocation error after requesting output stop. Fake-port tests cover both method and attribute failures, not robot silence.
 - Make hard stop terminal in the reusable conversation core, including queued turns and camera-sign entry points; a failed stop adapter request still retires that instance, while another direct stop may retry the halt. Fake-port regression tests do not establish hardware silence.
 - Keep one asyncio event loop for an operator-paced voice-host session, including sign actions and terminal stop; multi-turn and failure tests verify loop identity and cleanup.
