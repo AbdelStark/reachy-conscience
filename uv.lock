@@ -2149,7 +2149,7 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'asr'", specifier = ">=2,<3" },
     { name = "numpy", marker = "extra == 'robot'", specifier = ">=2,<3" },
     { name = "pillow", marker = "extra == 'ocr'", specifier = "==12.3.0" },
-    { name = "reachy-jev", git = "https://github.com/AbdelStark/reachy-jev.git?subdirectory=python&rev=5a746eea3929a8a258f04b565085202a063048dd" },
+    { name = "reachy-jev", git = "https://github.com/AbdelStark/reachy-jev.git?subdirectory=python&rev=f621d8871087a3b0e7e1e63ec6a82f2174efbebe" },
     { name = "reachy-mini", marker = "extra == 'robot'", specifier = "==1.10.0" },
     { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7.0" },
     { name = "websockets", marker = "extra == 'events'", specifier = "==15.0.1" },
@@ -2168,7 +2168,7 @@ dev = [
 [[package]]
 name = "reachy-jev"
 version = "0.0.1"
-source = { git = "https://github.com/AbdelStark/reachy-jev.git?subdirectory=python&rev=5a746eea3929a8a258f04b565085202a063048dd#5a746eea3929a8a258f04b565085202a063048dd" }
+source = { git = "https://github.com/AbdelStark/reachy-jev.git?subdirectory=python&rev=f621d8871087a3b0e7e1e63ec6a82f2174efbebe#f621d8871087a3b0e7e1e63ec6a82f2174efbebe" }
 
 [[package]]
 name = "reachy-mini"
