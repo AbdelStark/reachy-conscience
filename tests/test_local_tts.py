@@ -1,8 +1,10 @@
 """Offline synthesis never plays sound; no robot or LLM is used."""
 
+import asyncio
 import math
 import shutil
 import struct
+import sys
 
 import pytest
 
@@ -23,6 +25,57 @@ async def test_tts_rejects_oversized_text_before_process_spawn():
         await tts.synthesize("x" * 241)
     with pytest.raises(FileNotFoundError):
         await tts.synthesize("Hello")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+async def test_tts_stops_a_child_as_soon_as_its_output_exceeds_the_cap(stream):
+    tts = EspeakFfmpegSynthesizer(timeout_s=3)
+    code = f"import sys,time; sys.{stream}.buffer.write(b'x'*1048576); sys.{stream}.flush(); time.sleep(10)"
+    with pytest.raises(RuntimeError, match="output cap"):
+        await tts._call(sys.executable, "-c", code, data=b"", max_bytes=1024)
+
+
+@pytest.mark.asyncio
+async def test_tts_cancellation_reaps_its_child(monkeypatch):
+    spawned = []
+    spawned_event = asyncio.Event()
+    create = asyncio.create_subprocess_exec
+
+    async def capture(*args, **kwargs):
+        process = await create(*args, **kwargs)
+        spawned.append(process)
+        spawned_event.set()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", capture)
+    tts = EspeakFfmpegSynthesizer(timeout_s=20)
+    task = asyncio.create_task(
+        tts._call(sys.executable, "-c", "import time; time.sleep(10)", data=b"", max_bytes=1024)
+    )
+    await asyncio.wait_for(spawned_event.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert spawned[0].returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_tts_timeout_reaps_its_child(monkeypatch):
+    spawned = []
+    create = asyncio.create_subprocess_exec
+
+    async def capture(*args, **kwargs):
+        process = await create(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", capture)
+    tts = EspeakFfmpegSynthesizer(timeout_s=0.05)
+    with pytest.raises(TimeoutError):
+        await tts._call(sys.executable, "-c", "import time; time.sleep(10)", data=b"", max_bytes=1024)
+    assert len(spawned) == 1
+    assert spawned[0].returncode is not None
 
 
 @pytest.mark.asyncio

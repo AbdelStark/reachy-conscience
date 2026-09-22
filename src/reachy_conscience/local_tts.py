@@ -16,6 +16,24 @@ from .reachy_audio import MAX_OUTPUT_SECONDS, SAMPLE_RATE
 
 _VOICE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,39}(\+[A-Za-z0-9_-]{1,10})?$")
 _MAX_WAV_BYTES = 8_000_000
+_MAX_STDERR_BYTES = 64_000
+
+
+async def _read_capped(stream: asyncio.StreamReader, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await stream.read(min(64 * 1024, max_bytes - total + 1)):
+        total += len(chunk)
+        if total > max_bytes:
+            raise RuntimeError("offline TTS process exceeded output cap")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _discard_remaining(stream: asyncio.StreamReader) -> None:
+    # asyncio's subprocess transport may not finish wait() until pipes reach EOF.
+    while await stream.read(64 * 1024):
+        pass
 
 
 class EspeakFfmpegSynthesizer:
@@ -47,19 +65,50 @@ class EspeakFfmpegSynthesizer:
         self.ffmpeg_binary = ffmpeg_binary
 
     async def _call(self, *args: str, data: bytes, max_bytes: int) -> bytes:
+        if max_bytes <= 0:
+            raise ValueError("invalid TTS output cap")
         process = await asyncio.create_subprocess_exec(
             *args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+
+        async def feed() -> None:
+            try:
+                process.stdin.write(data)
+                await process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # A failed child may close stdin before consuming the input.
+            finally:
+                process.stdin.close()
+                try:
+                    await process.stdin.wait_closed()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+        tasks = [
+            asyncio.create_task(feed()),
+            asyncio.create_task(_read_capped(process.stdout, max_bytes)),
+            asyncio.create_task(_read_capped(process.stderr, _MAX_STDERR_BYTES)),
+            asyncio.create_task(process.wait()),
+        ]
         try:
-            output, _stderr = await asyncio.wait_for(process.communicate(data), self.timeout_s)
-        except (TimeoutError, asyncio.CancelledError):
-            process.kill()
+            _sent, output, _stderr, _exit = await asyncio.wait_for(asyncio.gather(*tasks), self.timeout_s)
+        except BaseException:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(_discard_remaining(process.stdout), _discard_remaining(process.stderr))
             await process.wait()
             raise
-        if process.returncode != 0 or not output or len(output) > max_bytes:
+        if process.returncode != 0 or not output:
             raise RuntimeError("offline TTS process failed or exceeded audio cap")
         return output
 
