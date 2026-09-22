@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "Abdelhamid" }]
 keywords = ["reachy-mini", "robotics", "jev", "guardrails"]
 classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13", "Topic :: Scientific/Engineering :: Artificial Intelligence"]
-dependencies = ["reachy-jev @ git+https://github.com/AbdelStark/reachy-jev.git@35b91073c6065071024d5ba3fc3bf3f0d0079f27#subdirectory=python"]
+dependencies = ["reachy-jev @ git+https://github.com/AbdelStark/reachy-jev.git@37c7bfb8e2d0e2beee1aa09e26e4c1e14668e5c7#subdirectory=python"]
 
 [project.scripts]
 conscience-owner-console = "reachy_conscience.owner_console_cli:main"
