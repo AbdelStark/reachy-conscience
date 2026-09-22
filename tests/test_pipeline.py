@@ -320,6 +320,27 @@ async def test_untrusted_planner_batch_is_rejected_before_partial_output(proposa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("invalid", "reason"),
+    [
+        (Speech(None), "invalid_speech"),
+        (ToolCall("note", {"text": object()}, "save note"), "invalid_tool_arguments"),
+        (Motion("small_gesture", {"yawDeg": float("nan")}), "invalid_motion_target"),
+    ],
+)
+async def test_later_malformed_proposal_rejects_whole_batch_before_any_output(invalid, reason):
+    ports = Ports([Speech("valid first"), invalid])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        return Verdict("approve", "fixture")
+
+    result = await pipeline(ports, guard).run_turn("hello")
+    assert (result.status, result.delivered, result.reason) == ("held", 0, reason)
+    assert ports.events == [("guard", "inbound"), ("plan", "hello")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("proposal", "reason", "options"),
     [
         (Speech(None), "invalid_speech", {}),
