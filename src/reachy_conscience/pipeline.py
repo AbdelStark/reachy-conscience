@@ -51,11 +51,12 @@ def _canonical_object(value: Mapping[str, Any], max_bytes: int) -> str:
     return encoded
 
 
-def _proposal_shape_error(proposal: Proposal) -> str | None:
-    """Validate the whole planner batch before any member reaches an output guard."""
+def _prepare_proposal(proposal: Proposal) -> Proposal | str:
+    """Validate and detach one proposal from planner-owned mutable mappings."""
     if isinstance(proposal, Speech):
         if not isinstance(proposal.text, str) or not proposal.text.strip() or len(proposal.text) > 2000:
             return "invalid_speech"
+        return Speech(proposal.text)
     elif isinstance(proposal, ToolCall):
         if (
             not isinstance(proposal.name, str)
@@ -66,9 +67,10 @@ def _proposal_shape_error(proposal: Proposal) -> str | None:
         ):
             return "invalid_tool"
         try:
-            _canonical_object(proposal.arguments, 4096)
+            arguments_json = _canonical_object(proposal.arguments, 4096)
         except (TypeError, ValueError, OverflowError, RecursionError):
             return "invalid_tool_arguments"
+        return ToolCall(proposal.name, json.loads(arguments_json), proposal.summary)
     elif isinstance(proposal, Motion):
         if (
             not isinstance(proposal.motion_class, str)
@@ -77,12 +79,12 @@ def _proposal_shape_error(proposal: Proposal) -> str | None:
         ):
             return "invalid_proposal"
         try:
-            _canonical_object(proposal.target, 2048)
+            target_json = _canonical_object(proposal.target, 2048)
         except (TypeError, ValueError, OverflowError, RecursionError):
             return "invalid_motion_target"
+        return Motion(proposal.motion_class, json.loads(target_json))
     else:
         return "unknown_proposal"
-    return None
 
 
 class Planner(Protocol):
@@ -380,11 +382,14 @@ class GuardedConversation:
                 raise ValueError("invalid planner item")
         except Exception:
             return TurnResult("held", reason="invalid_proposals")
+        prepared_proposals: list[Proposal] = []
         for proposal in proposals:
-            if reason := _proposal_shape_error(proposal):
-                return TurnResult("held", reason=reason)
+            prepared = _prepare_proposal(proposal)
+            if isinstance(prepared, str):
+                return TurnResult("held", reason=prepared)
+            prepared_proposals.append(prepared)
         delivered = 0
-        for proposal in proposals:
+        for proposal in prepared_proposals:
             result = await self._emit(
                 proposal, generation, request_text, sign_text=request_text if sign_mode else None
             )
@@ -447,8 +452,6 @@ class GuardedConversation:
     ) -> TurnResult:
         if generation != self._generation:
             return TurnResult("interrupted")
-        if reason := _proposal_shape_error(proposal):
-            return TurnResult("held", reason=reason)
         tool_arguments_json: str | None = None
         motion_target_json: str | None = None
         motion_observed_at: float | None = None

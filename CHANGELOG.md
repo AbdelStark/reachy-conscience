@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Prevalidate every proposal's fields and bounded tool/motion JSON before any item in a planner batch can reach an output guard or sink. A structurally malformed later item now holds the whole batch with zero dispatched outputs; guard decisions and runtime sink failures can still stop a turn after earlier approved actions.
+- Prevalidate and detach every proposal's fields and bounded tool/motion JSON from planner-owned mappings before any item in a batch can reach an output guard or sink. A structurally malformed later item now holds the whole batch with zero dispatched outputs, and later mutation of the planner's original arguments cannot change the prepared batch; guard decisions and runtime sink failures can still stop a turn after earlier approved actions.
 - Require a finite 0–1 probability on read-only Reflex `user_addressed`, `yield`, and `interrupt` hints; reject JSON `null` instead of treating it as an unscored event.
 - Continue to the independent emergency-stop adapter even when optional audio revocation or approval cancellation fails; report an audio-revocation error after requesting output stop. Fake-port tests cover both method and attribute failures, not robot silence.
 - Make hard stop terminal in the reusable conversation core, including queued turns and camera-sign entry points; a failed stop adapter request still retires that instance, while another direct stop may retry the halt. Fake-port regression tests do not establish hardware silence.

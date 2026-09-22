@@ -341,6 +341,44 @@ async def test_later_malformed_proposal_rejects_whole_batch_before_any_output(in
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("kind", "payload", "options", "expected"),
+    [
+        (
+            "tool",
+            {"city": "Paris"},
+            {"read_only_tools": frozenset({"get_weather"})},
+            ("execute", "get_weather", {"city": "Paris"}),
+        ),
+        (
+            "motion",
+            {"yawDeg": 5},
+            {"enable_motion": True, "motion_context": Context()},
+            ("execute", "small_gesture", {"yawDeg": 5}),
+        ),
+    ],
+)
+async def test_prevalidated_batch_uses_original_nested_proposal_data(kind, payload, options, expected):
+    payload = dict(payload)
+    proposal = (
+        ToolCall("get_weather", payload, "weather lookup")
+        if kind == "tool"
+        else Motion("small_gesture", payload)
+    )
+    ports = Ports([Speech("valid first"), proposal])
+
+    async def guard(action):
+        ports.events.append(("guard", action.kind))
+        if action.kind == "utterance":
+            payload.update({"city": object()} if "city" in payload else {"yawDeg": float("nan")})
+        return Verdict("approve", "fixture")
+
+    result = await pipeline(ports, guard, **options).run_turn("hello")
+    assert (result.status, result.delivered) == ("complete", 2)
+    assert expected in ports.events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("proposal", "reason", "options"),
     [
         (Speech(None), "invalid_speech", {}),
