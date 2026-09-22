@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Check source-archive governance, examples, tests, scripts, and package assets alongside wheel runtime files in CI, and reject local-only paths or archive links before distribution.
 - Enforce the offline TTS subprocess output limits while reading stdout and stderr, killing and reaping overproducing, timed-out, or cancelled children before any audio enqueue. Local subprocess tests cover those paths; this does not validate robot playback.
 - Add an opt-in audio-only `quiet` fast path in the owned voice host: confident inbound routing can request the same owned playback-gate flush without planning or synthesizing speech. A failed flush ends the host session; fake-port tests do not establish physical silence or playback completion. `look_at_speaker` and `sleep` remain disabled.
 - Pin the shared `reachy-jev` Python Unicode transcript-bound update and retain the reviewed guard question wires; this is package-contract validation, not a live TypeSafe or robot result.
